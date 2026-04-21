@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from './api.js';
 import { computeGraph } from './graph.js';
 import GraphCell from './components/GraphCell.jsx';
@@ -19,6 +19,14 @@ export default function App() {
   const [diff, setDiff] = useState(null);
   const [error, setError] = useState(null);
   const [showRepoDialog, setShowRepoDialog] = useState(false);
+
+  // Resizable layout widths
+  const [sidebarWidth, setSidebarWidth] = useState(280);
+  const [logPaneWidth, setLogPaneWidth] = useState(null); // null → 50/50 default
+  const [graphWidth, setGraphWidth] = useState(48);
+  const [dateWidth, setDateWidth] = useState(140);
+  const [authorWidth, setAuthorWidth] = useState(140);
+  const logPaneRef = useRef(null);
 
   // Load repos on mount
   useEffect(() => {
@@ -74,16 +82,49 @@ export default function App() {
     return filterAncestors(log.commits, tip);
   }, [log, branches, branchFilter]);
 
-  const graphRows = useMemo(() => computeGraph(filteredCommits), [filteredCommits]);
+  const hasUncommitted = status && status.files && status.files.length > 0;
+
+  // Uncommitted is rendered as a virtual commit at the top of the graph so
+  // computeGraph can wire HEAD into lane 0 — otherwise the line from the
+  // uncommitted dot down to its base commit can't pass through intermediate
+  // rows (e.g. stash entries) and shows up broken.
+  const uncommittedVirtual = useMemo(() => {
+    if (!hasUncommitted || branchFilter !== '__all__' || !log) return null;
+    return {
+      hash: UNCOMMITTED,
+      parents: log.head ? [log.head] : [],
+      refs: [],
+      isHead: false,
+      isUncommitted: true,
+    };
+  }, [hasUncommitted, branchFilter, log]);
+
+  const graphCommits = useMemo(
+    () => uncommittedVirtual ? [uncommittedVirtual, ...filteredCommits] : filteredCommits,
+    [uncommittedVirtual, filteredCommits]
+  );
+
+  const graphRows = useMemo(() => computeGraph(graphCommits), [graphCommits]);
   const maxLanes = useMemo(
     () => graphRows.reduce((m, r) => Math.max(m, r.lanesBefore.length, r.lanesAfter.length), 0),
     [graphRows]
   );
+  const commitRowOffset = uncommittedVirtual ? 1 : 0;
 
-  const hasUncommitted = status && status.files && status.files.length > 0;
+  const appStyle = { gridTemplateColumns: `${sidebarWidth}px 4px 1fr` };
+  const splitStyle = {
+    gridTemplateColumns: logPaneWidth != null
+      ? `${logPaneWidth}px 4px 1fr`
+      : `1fr 4px 1fr`,
+  };
+  const logPaneStyle = {
+    '--log-graph-w': `${graphWidth}px`,
+    '--log-date-w': `${dateWidth}px`,
+    '--log-author-w': `${authorWidth}px`,
+  };
 
   return (
-    <div className="app">
+    <div className="app" style={appStyle}>
       <div className="titlebar">
         <span className="title">git-viewer</span>
         {status && (
@@ -145,6 +186,11 @@ export default function App() {
         </div>
       </aside>
 
+      <div
+        className="resizer-x sidebar-resizer"
+        onMouseDown={e => startDrag(e, sidebarWidth, 160, 640, setSidebarWidth, +1)}
+      />
+
       <div className="right-pane">
         <div className="toolbar">
           <label>
@@ -166,25 +212,37 @@ export default function App() {
           {error && <span style={{ color: 'var(--conflict)' }}>Error: {error}</span>}
         </div>
 
-        <div className="log-and-diff">
-          <div className="log-pane">
+        <div className="log-and-diff" style={splitStyle}>
+          <div className="log-pane" ref={logPaneRef} style={logPaneStyle}>
             <div className="log-header">
               <span>Graph</span>
               <span>Description</span>
               <span>Date</span>
               <span>Author</span>
             </div>
+            <div
+              className="resizer-col col-graph-desc"
+              style={{ left: `${graphWidth + 2}px` }}
+              onMouseDown={e => startDrag(e, graphWidth, 24, 320, setGraphWidth, +1)}
+            />
+            <div
+              className="resizer-col col-desc-date"
+              style={{ right: `${dateWidth + authorWidth + 24}px` }}
+              onMouseDown={e => startDrag(e, dateWidth, 60, 400, setDateWidth, -1)}
+            />
+            <div
+              className="resizer-col col-date-author"
+              style={{ right: `${authorWidth + 24}px` }}
+              onMouseDown={e => startDrag(e, authorWidth, 60, 400, setAuthorWidth, -1)}
+            />
             <div className="log-rows">
-              {hasUncommitted && branchFilter === '__all__' && (
+              {uncommittedVirtual && (
                 <div
                   className={`log-row ${selection?.type === 'uncommitted' ? 'selected' : ''}`}
                   onClick={() => setSelection({ type: 'uncommitted' })}
                 >
                   <div className="graph">
-                    <svg width={16} height={22}>
-                      <circle cx={7} cy={11} r={4} fill="none" stroke="#b89500" strokeWidth="2" />
-                      <line x1={7} y1={15} x2={7} y2={22} stroke="#b89500" strokeWidth="1.5" />
-                    </svg>
+                    <GraphCell row={graphRows[0]} commit={uncommittedVirtual} maxLanes={maxLanes} />
                   </div>
                   <div className="subject">
                     <span className="ref-chip uncommitted">Uncommitted Changes ({status.files.length})</span>
@@ -200,7 +258,7 @@ export default function App() {
                   onClick={() => setSelection({ type: 'commit', sha: c.hash })}
                 >
                   <div className="graph">
-                    <GraphCell row={graphRows[i]} commit={c} maxLanes={maxLanes} />
+                    <GraphCell row={graphRows[i + commitRowOffset]} commit={c} maxLanes={maxLanes} />
                   </div>
                   <div className="subject">
                     {c.refs.map(r => (
@@ -220,6 +278,18 @@ export default function App() {
               {filteredCommits.length === 0 && <div className="empty">无提交</div>}
             </div>
           </div>
+
+          <div
+            className="resizer-x log-resizer"
+            onMouseDown={e => startDrag(
+              e,
+              logPaneRef.current?.offsetWidth ?? 600,
+              220,
+              2000,
+              setLogPaneWidth,
+              +1,
+            )}
+          />
 
           <DiffPanel selection={selection} diff={diff} status={status} setSelection={setSelection} />
         </div>
@@ -298,6 +368,26 @@ function DiffPanel({ selection, diff, status, setSelection }) {
   }
 
   return <div className="diff-pane"><div className="diff-empty">Unsupported</div></div>;
+}
+
+function startDrag(e, initial, min, max, onChange, sign) {
+  e.preventDefault();
+  const startX = e.clientX;
+  function onMove(me) {
+    const dx = (me.clientX - startX) * sign;
+    const next = Math.max(min, Math.min(max, initial + dx));
+    onChange(next);
+  }
+  function onUp() {
+    window.removeEventListener('mousemove', onMove);
+    window.removeEventListener('mouseup', onUp);
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+  }
+  window.addEventListener('mousemove', onMove);
+  window.addEventListener('mouseup', onUp);
+  document.body.style.cursor = 'col-resize';
+  document.body.style.userSelect = 'none';
 }
 
 function formatDate(iso) {

@@ -75,37 +75,66 @@ export async function getBranches(repoPath) {
   return { local: locals, remote: remotes, current: local.current };
 }
 
-// Fetch log with parents so the frontend can draw a graph
-export async function getLog(repoPath, { limit = 500, all = true, includeRemote = true } = {}) {
+// Fetch log with parents so the frontend can draw a graph.
+// Stash entries are fetched separately via `git stash list` (instead of relying
+// on `--all`), because `--all` pulls in stash's synthetic index/untracked
+// parent commits which are noise. It also only yields the top `refs/stash`,
+// missing older reflog entries (stash@{1}, stash@{2}, ...).
+export async function getLog(repoPath, { limit = 500, includeRemote = true } = {}) {
   const git = getGit(repoPath);
-  const args = [
+  const logArgs = [
+    'log',
     `--pretty=format:%H%x01%P%x01%an%x01%ae%x01%aI%x01%s`,
     `-n${limit}`,
+    '--branches',
+    '--tags',
   ];
-  if (all) args.push('--all');
-  if (!includeRemote) {
-    // --all includes remotes; if excluded, branches only
-    args.splice(args.indexOf('--all'), 1);
-    args.push('--branches');
-  }
-  const raw = await git.raw(['log', ...args]);
-  const commits = raw.split('\n').filter(Boolean).map(line => {
-    const [hash, parents, authorName, authorEmail, date, subject] = line.split('\x01');
-    return {
-      hash,
-      parents: parents ? parents.split(' ').filter(Boolean) : [],
-      author: { name: authorName, email: authorEmail },
-      date,
-      subject,
-    };
-  });
+  if (includeRemote) logArgs.push('--remotes');
 
-  // Attach refs (branches/tags) to each commit
+  const raw = await git.raw(logArgs);
+  const logCommits = raw.split('\n').filter(Boolean).map(parseCommitLine);
+
+  // Fetch all stash entries (stash@{0}, stash@{1}, ...) from the reflog.
+  let stashCommits = [];
+  try {
+    const stashRaw = await git.raw([
+      'stash', 'list',
+      '--format=%gd%x01%H%x01%P%x01%an%x01%ae%x01%aI%x01%s',
+    ]);
+    stashCommits = stashRaw.split('\n').filter(Boolean).map(line => {
+      const [stashRef, hash, parents, authorName, authorEmail, date, subject] = line.split('\x01');
+      return {
+        hash,
+        parents: parents ? parents.split(' ').filter(Boolean) : [],
+        author: { name: authorName, email: authorEmail },
+        date,
+        subject,
+        _stashRef: stashRef, // "stash@{0}" etc
+      };
+    });
+  } catch {
+    // No stashes or older git — ignore.
+  }
+
+  // Merge & dedupe (log shouldn't overlap with stash since we dropped --all,
+  // but keep defensive dedupe). Sort newest first by ISO date.
+  const seen = new Set();
+  const merged = [];
+  for (const c of [...logCommits, ...stashCommits]) {
+    if (seen.has(c.hash)) continue;
+    seen.add(c.hash);
+    merged.push(c);
+  }
+  merged.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+
+  // Attach refs (branches/tags/remotes). Skip refs/stash — stash entries get
+  // their stash@{N} label applied below.
   const refsRaw = await git.raw(['for-each-ref', '--format=%(objectname) %(refname:short) %(refname)']);
   const refsByCommit = new Map();
   refsRaw.split('\n').filter(Boolean).forEach(line => {
     const [sha, shortName, fullName] = line.split(' ');
     if (!sha) return;
+    if (fullName === 'refs/stash') return;
     const kind = fullName?.startsWith('refs/remotes/')
       ? 'remote'
       : fullName?.startsWith('refs/tags/')
@@ -114,15 +143,30 @@ export async function getLog(repoPath, { limit = 500, all = true, includeRemote 
     if (!refsByCommit.has(sha)) refsByCommit.set(sha, []);
     refsByCommit.get(sha).push({ name: shortName, kind });
   });
+  for (const s of stashCommits) {
+    if (!refsByCommit.has(s.hash)) refsByCommit.set(s.hash, []);
+    refsByCommit.get(s.hash).push({ name: s._stashRef, kind: 'stash' });
+    delete s._stashRef;
+  }
 
   const head = (await git.raw(['rev-parse', 'HEAD'])).trim();
-
-  commits.forEach(c => {
+  merged.forEach(c => {
     c.refs = refsByCommit.get(c.hash) || [];
     c.isHead = c.hash === head;
   });
 
-  return { head, commits };
+  return { head, commits: merged };
+}
+
+function parseCommitLine(line) {
+  const [hash, parents, authorName, authorEmail, date, subject] = line.split('\x01');
+  return {
+    hash,
+    parents: parents ? parents.split(' ').filter(Boolean) : [],
+    author: { name: authorName, email: authorEmail },
+    date,
+    subject,
+  };
 }
 
 export async function getCommitDetail(repoPath, sha) {

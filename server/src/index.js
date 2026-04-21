@@ -111,7 +111,7 @@ app.get('/api/repos/:id/branches', withRepo(async (repo, req, res) => {
 app.get('/api/repos/:id/log', withRepo(async (repo, req, res) => {
   const limit = Math.min(parseInt(req.query.limit, 10) || 500, 2000);
   const includeRemote = req.query.remote !== 'false';
-  res.json(await getLog(repo.path, { limit, all: true, includeRemote }));
+  res.json(await getLog(repo.path, { limit, includeRemote }));
 }));
 
 app.get('/api/repos/:id/commit/:sha', withRepo(async (repo, req, res) => {

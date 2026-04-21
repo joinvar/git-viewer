@@ -57,7 +57,7 @@ select {
 
 .app {
   display: grid;
-  grid-template-columns: 280px 1fr;
+  grid-template-columns: 280px 4px 1fr;
   grid-template-rows: 32px 1fr;
   height: 100vh;
   overflow: hidden;
@@ -87,7 +87,6 @@ select {
 /* left sidebar */
 .sidebar {
   background: var(--panel);
-  border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -172,21 +171,24 @@ select {
 /* Split between log and diff */
 .log-and-diff {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr 4px 1fr;
   overflow: hidden;
 }
 
 .log-pane {
+  --log-graph-w: 48px;
+  --log-date-w: 140px;
+  --log-author-w: 140px;
   overflow: hidden;
   display: flex;
   flex-direction: column;
-  border-right: 1px solid var(--border);
+  position: relative;
 }
 
 .log-header {
   display: grid;
-  grid-template-columns: 48px 1fr 140px 140px;
-  padding: 6px 10px;
+  grid-template-columns: var(--log-graph-w) 1fr var(--log-date-w) var(--log-author-w);
+  padding: 6px 20px 6px 10px;
   background: var(--bg-alt);
   border-bottom: 1px solid var(--border);
   font-size: 11px;
@@ -199,10 +201,11 @@ select {
 .log-rows {
   flex: 1;
   overflow-y: auto;
+  scrollbar-gutter: stable;
 }
 .log-row {
   display: grid;
-  grid-template-columns: 48px 1fr 140px 140px;
+  grid-template-columns: var(--log-graph-w) 1fr var(--log-date-w) var(--log-author-w);
   padding: 4px 10px;
   cursor: pointer;
   border-bottom: 1px solid transparent;
@@ -256,6 +259,10 @@ select {
 .ref-chip.uncommitted {
   background: var(--modified);
   color: black;
+}
+.ref-chip.stash {
+  background: #e48ae0;
+  color: #1a1a1a;
 }
 
 /* Diff viewer */
@@ -463,6 +470,34 @@ select {
   display: flex;
   gap: 8px;
   margin-top: 8px;
+}
+
+/* Resizers */
+.resizer-x {
+  cursor: col-resize;
+  background: var(--border);
+  position: relative;
+  z-index: 5;
+  transition: background-color 120ms;
+}
+.resizer-x:hover,
+.resizer-x:active {
+  background: var(--accent);
+}
+
+.resizer-col {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  cursor: col-resize;
+  z-index: 5;
+  background: transparent;
+  transition: background-color 120ms;
+}
+.resizer-col:hover,
+.resizer-col:active {
+  background: var(--accent);
 }
 
 /* Scrollbar */
