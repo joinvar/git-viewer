@@ -1,0 +1,9 @@
+{
+  "port": 5174,
+  "repos": [
+    {
+      "name": "git-viewer",
+      "path": "D:/code/git-viewer"
+    }
+  ]
+}

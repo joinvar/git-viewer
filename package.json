@@ -1,0 +1,16 @@
+{
+  "name": "git-viewer",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Lightweight read-only web UI for viewing git repos",
+  "scripts": {
+    "dev": "concurrently -n server,web -c cyan,magenta \"npm:dev:server\" \"npm:dev:web\"",
+    "dev:server": "npm --prefix server run dev",
+    "dev:web": "npm --prefix web run dev",
+    "install:all": "npm install && npm --prefix server install && npm --prefix web install",
+    "build": "npm --prefix web run build"
+  },
+  "devDependencies": {
+    "concurrently": "^9.0.1"
+  }
+}
