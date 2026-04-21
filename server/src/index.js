@@ -15,6 +15,8 @@ import {
   getCommitDetail,
   getWorkingDiff,
   getCommitFileDiff,
+  discardFile,
+  discardAll,
 } from './git.js';
 
 // Boot-time port — re-reading port on every change would require a restart,
@@ -125,6 +127,17 @@ app.get('/api/repos/:id/diff', withRepo(async (repo, req, res) => {
     res.json(await getCommitFileDiff(repo.path, req.query.sha, file));
   } else {
     res.json(await getWorkingDiff(repo.path, file));
+  }
+}));
+
+app.post('/api/repos/:id/discard', withRepo(async (repo, req, res) => {
+  const { file, all } = req.body || {};
+  if (all) {
+    res.json(await discardAll(repo.path));
+  } else if (file) {
+    res.json(await discardFile(repo.path, file));
+  } else {
+    res.status(400).json({ error: 'file or all=true required' });
   }
 }));
 

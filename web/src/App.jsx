@@ -55,6 +55,33 @@ export default function App() {
     }).catch(e => setError(e.message));
   }
 
+  function discardChange(f) {
+    if (!repoId) return;
+    const untracked = f.status === 'U';
+    const msg = untracked
+      ? `确定要删除未跟踪文件 "${f.path}" 吗？此操作不可撤销。`
+      : `确定要丢弃对 "${f.path}" 的改动吗？已暂存和工作区的修改都会被还原到 HEAD。`;
+    if (!window.confirm(msg)) return;
+    api.discardFile(repoId, f.path)
+      .then(() => {
+        if (selection?.type === 'change' && selection.file === f.path) setSelection(null);
+        refresh();
+      })
+      .catch(e => setError(e.message));
+  }
+
+  function discardAllChanges() {
+    if (!repoId || !status?.files?.length) return;
+    const n = status.files.length;
+    if (!window.confirm(`确定要丢弃全部 ${n} 处改动吗？未跟踪文件将被删除，修改将还原到 HEAD，此操作不可撤销。`)) return;
+    api.discardAll(repoId)
+      .then(() => {
+        if (selection?.type === 'change' || selection?.type === 'uncommitted') setSelection(null);
+        refresh();
+      })
+      .catch(e => setError(e.message));
+  }
+
   // Reload log when showRemote changes
   useEffect(() => {
     if (!repoId) return;
@@ -173,7 +200,18 @@ export default function App() {
 
         <div className="section-header">
           <span>Changes</span>
-          <span>{status?.files?.length || 0}</span>
+          <span className="section-right">
+            {hasUncommitted && (
+              <button
+                className="icon-btn discard-btn"
+                title="丢弃所有改动"
+                onClick={() => discardAllChanges()}
+              >
+                ↶
+              </button>
+            )}
+            <span className="count">{status?.files?.length || 0}</span>
+          </span>
         </div>
         <div className="changes-list">
           {!status && <div className="empty">…</div>}
@@ -188,6 +226,13 @@ export default function App() {
               title={f.path}
             >
               <span className="file">{f.path}</span>
+              <button
+                className="icon-btn row-discard-btn"
+                title={`丢弃对 ${f.path} 的改动`}
+                onClick={e => { e.stopPropagation(); discardChange(f); }}
+              >
+                ↶
+              </button>
               <span className={`code ${f.status}`}>{f.status}</span>
             </div>
           ))}

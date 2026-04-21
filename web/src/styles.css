@@ -103,6 +103,16 @@ select {
   justify-content: space-between;
   align-items: center;
 }
+.section-header .section-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.section-header .discard-btn {
+  font-size: 13px;
+  line-height: 1;
+  padding: 1px 6px;
+}
 
 .repo-selector {
   padding: 6px 10px;
@@ -146,6 +156,13 @@ select {
   font-weight: 700;
   font-size: 11px;
 }
+.change-row .row-discard-btn {
+  visibility: hidden;
+  font-size: 13px;
+  line-height: 1;
+  padding: 0 6px;
+}
+.change-row:hover .row-discard-btn { visibility: visible; }
 .code.M { color: var(--modified); }
 .code.A { color: var(--added); }
 .code.D { color: var(--removed); }

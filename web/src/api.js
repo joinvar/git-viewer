@@ -35,4 +35,6 @@ export const api = {
   commit:    (id, sha) => j(`/api/repos/${id}/commit/${sha}`),
   diff:      (id, file, sha) =>
     j(`/api/repos/${id}/diff?file=${encodeURIComponent(file)}${sha ? `&sha=${sha}` : ''}`),
+  discardFile:(id, file) => postJSON(`/api/repos/${id}/discard`, { file }),
+  discardAll:(id) => postJSON(`/api/repos/${id}/discard`, { all: true }),
 };

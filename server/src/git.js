@@ -238,3 +238,42 @@ export async function getCommitFileDiff(repoPath, sha, file) {
   const diff = await git.raw(['show', `${sha}`, '--', file]);
   return { diff, file, sha };
 }
+
+// Discard working-tree + index changes for one path.
+// Untracked → remove from disk. Tracked (modified / staged / added / deleted / renamed)
+// → `git restore --source=HEAD --staged --worktree`, which for added-and-staged
+// files also removes them from the working tree since HEAD does not contain them.
+export async function discardFile(repoPath, file) {
+  const git = getGit(repoPath);
+  const status = await git.status();
+  const entry = status.files.find(f => f.path === file);
+  if (!entry) return { file, discarded: false };
+
+  const untracked = entry.index === '?' && entry.working_dir === '?';
+  if (untracked) {
+    const abs = path.join(repoPath, file);
+    fs.rmSync(abs, { force: true, recursive: true });
+    return { file, discarded: true };
+  }
+
+  await git.raw(['restore', '--source=HEAD', '--staged', '--worktree', '--', file]);
+  return { file, discarded: true };
+}
+
+// Discard every working-tree + index change. Tracked changes revert to HEAD;
+// untracked files and directories are removed (gitignored files are preserved
+// — no `-x`).
+export async function discardAll(repoPath) {
+  const git = getGit(repoPath);
+  const status = await git.status();
+  const tracked = status.files.filter(f => !(f.index === '?' && f.working_dir === '?'));
+  const untracked = status.files.filter(f => f.index === '?' && f.working_dir === '?');
+
+  if (tracked.length) {
+    await git.raw(['restore', '--source=HEAD', '--staged', '--worktree', '--', '.']);
+  }
+  for (const f of untracked) {
+    fs.rmSync(path.join(repoPath, f.path), { force: true, recursive: true });
+  }
+  return { discarded: status.files.length };
+}
