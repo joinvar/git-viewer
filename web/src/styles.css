@@ -121,7 +121,21 @@ select {
   gap: 6px;
   align-items: center;
 }
-.repo-selector select { flex: 1; min-width: 0; }
+.repo-selector select {
+  flex: 1;
+  min-width: 0;
+  background: #3c3c3c;
+  border-color: #5a5a5a;
+  color: var(--text-bright);
+}
+.repo-selector select:focus {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+.repo-selector select option {
+  background: #3c3c3c;
+  color: var(--text-bright);
+}
 .repo-selector .refresh-btn {
   font-size: 15px;
   line-height: 1;
