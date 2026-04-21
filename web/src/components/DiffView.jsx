@@ -30,27 +30,31 @@ export default function DiffView({ title, meta, diff, empty, untracked, content,
     );
   }
 
-  const lines = diff.split('\n').map((line, i) => {
+  return (
+    <div className="diff-pane">
+      <DiffHeader title={title} meta={meta} />
+      <DiffLines text={diff} />
+    </div>
+  );
+}
+
+export function DiffLines({ text }) {
+  const lines = (text || '').split('\n').map((line, i) => {
     let cls = '';
     if (line.startsWith('+++') || line.startsWith('---') || line.startsWith('diff ') || line.startsWith('index ')) cls = 'file';
     else if (line.startsWith('@@')) cls = 'hunk';
     else if (line.startsWith('+')) cls = 'add';
     else if (line.startsWith('-')) cls = 'del';
-    return <span key={i} className={`diff-line ${cls}`}>{line || ' '}</span>;
+    return <span key={i} className={`diff-line ${cls}`}>{line || ' '}</span>;
   });
-
-  return (
-    <div className="diff-pane">
-      <DiffHeader title={title} meta={meta} />
-      <div className="diff-content">{lines}</div>
-    </div>
-  );
+  return <div className="diff-content">{lines}</div>;
 }
 
 function DiffHeader({ title, meta }) {
+  if (!title && !meta) return null;
   return (
     <div className="diff-header">
-      <div className="title">{title}</div>
+      {title && <div className="title">{title}</div>}
       {meta && <div className="meta">{meta}</div>}
     </div>
   );

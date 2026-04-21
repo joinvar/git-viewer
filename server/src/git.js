@@ -171,24 +171,28 @@ function parseCommitLine(line) {
 
 export async function getCommitDetail(repoPath, sha) {
   const git = getGit(repoPath);
-  const show = await git.show([
-    '--stat',
-    '--patch',
+
+  // Metadata in its own call with `-s` (no patch). `%b` may span multiple
+  // lines (body + trailers), so we can't reliably split body from patch when
+  // both are in the same output stream — fetch them separately.
+  const meta = await git.raw([
+    'show', '-s',
     '--format=%H%x01%P%x01%an%x01%ae%x01%aI%x01%s%x01%b',
     sha,
   ]);
-  // First line is the formatted meta; rest is stat+diff
-  const nl = show.indexOf('\n');
-  const metaLine = show.slice(0, nl);
-  const body = show.slice(nl + 1);
-  const [hash, parents, authorName, authorEmail, date, subject, commitBody] = metaLine.split('\x01');
+  const parts = meta.replace(/\n$/, '').split('\x01');
+  const [hash, parents, authorName, authorEmail, date, subject] = parts;
+  const body = parts.slice(6).join('\x01').trim();
 
-  // Files changed (from --stat section or diff headers)
-  const files = await git.raw(['show', '--name-status', '--format=', sha]);
-  const fileList = files.split('\n').filter(Boolean).map(line => {
+  const filesRaw = await git.raw(['show', '--name-status', '--format=', sha]);
+  const fileList = filesRaw.split('\n').filter(Boolean).map(line => {
     const [code, ...rest] = line.split('\t');
     return { status: code.charAt(0), path: rest.join('\t') };
   });
+
+  // Skip `--stat` — the frontend already renders the file summary in its own
+  // section, and parsing is cleaner when the output is pure `diff --git` blocks.
+  const diff = await git.raw(['show', '--format=', '--patch', sha]);
 
   return {
     hash,
@@ -196,9 +200,9 @@ export async function getCommitDetail(repoPath, sha) {
     author: { name: authorName, email: authorEmail },
     date,
     subject,
-    body: commitBody || '',
+    body,
     files: fileList,
-    diff: body,
+    diff,
   };
 }
 

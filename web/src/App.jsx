@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from './api.js';
 import { computeGraph } from './graph.js';
 import GraphCell from './components/GraphCell.jsx';
-import DiffView from './components/DiffView.jsx';
+import DiffView, { DiffLines } from './components/DiffView.jsx';
 import ReposDialog from './components/ReposDialog.jsx';
 
 const UNCOMMITTED = '__uncommitted__';
@@ -397,25 +397,50 @@ function DiffPanel({ selection, diff, status, setSelection }) {
 
   if (selection.type === 'commit') {
     const c = diff;
+    const fileDiffs = splitPatchByFile(c.diff);
+    const statusByPath = new Map(c.files.map(f => [f.path, f.status]));
     return (
       <div className="diff-pane">
-        <div className="diff-header">
+        <div className="diff-header commit-meta">
           <div className="title">{c.subject}</div>
           <div className="meta">
             {c.hash.slice(0, 8)} · {c.author.name} · {formatDate(c.date)}
             {c.parents.length > 1 && ` · merge of ${c.parents.length} parents`}
           </div>
-          {c.body && <pre style={{ margin: '6px 0 0', color: 'var(--text-dim)', whiteSpace: 'pre-wrap' }}>{c.body}</pre>}
+          {c.body && <pre className="commit-body">{c.body}</pre>}
         </div>
+        <div className="section-bar">文件 ({c.files.length})</div>
         <div className="files-list">
           {c.files.map(f => (
-            <div key={f.path} className="file-item">
+            <div
+              key={f.path}
+              className="file-item"
+              onClick={() => scrollToFileDiff(f.path)}
+              title="跳转到此文件的差异"
+            >
               <span className={`code ${f.status}`}>{f.status}</span>
               <span>{f.path}</span>
             </div>
           ))}
         </div>
-        <DiffView title="" meta="" diff={c.diff} />
+        <div className="section-bar">差异</div>
+        {fileDiffs.length === 0 && <div className="diff-empty">无差异</div>}
+        {fileDiffs.map(fd => {
+          const st = statusByPath.get(fd.path) || 'M';
+          return (
+            <section
+              key={fd.path}
+              id={fileDiffId(fd.path)}
+              className="file-diff-block"
+            >
+              <div className="file-diff-header">
+                <span className={`code ${st}`}>{st}</span>
+                <span className="path">{fd.path}</span>
+              </div>
+              <DiffLines text={fd.patch} />
+            </section>
+          );
+        })}
       </div>
     );
   }
@@ -456,6 +481,38 @@ function findBranchTip(branches, filter) {
   const [kind, name] = filter.split(':');
   const list = kind === 'local' ? branches.local : branches.remote;
   return list.find(b => b.name === name)?.commit;
+}
+
+// Split `git show --patch` output into per-file blocks, keyed by the
+// destination path (`b/<path>` in the `diff --git` marker).
+function splitPatchByFile(text) {
+  if (!text) return [];
+  const positions = [];
+  const re = /^diff --git /gm;
+  let m;
+  while ((m = re.exec(text)) !== null) positions.push(m.index);
+  if (!positions.length) return [];
+  const chunks = [];
+  for (let i = 0; i < positions.length; i++) {
+    const start = positions[i];
+    const end = i + 1 < positions.length ? positions[i + 1] : text.length;
+    const block = text.slice(start, end);
+    const firstLine = block.split('\n', 1)[0];
+    // diff --git a/<old> b/<new> — paths may be quoted when they contain spaces.
+    const match = firstLine.match(/^diff --git (?:"a\/(.+?)"|a\/(\S+)) (?:"b\/(.+?)"|b\/(.+))$/);
+    const path = match ? (match[3] || match[4]) : firstLine.replace(/^diff --git /, '');
+    chunks.push({ path, patch: block });
+  }
+  return chunks;
+}
+
+function fileDiffId(path) {
+  return `diff-file-${path}`;
+}
+
+function scrollToFileDiff(path) {
+  const el = document.getElementById(fileDiffId(path));
+  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 function filterAncestors(commits, tip) {

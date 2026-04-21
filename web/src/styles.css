@@ -315,6 +315,64 @@ select {
   font-size: 11px;
   margin-top: 2px;
 }
+.diff-header.commit-meta {
+  position: static;
+  padding: 12px 14px;
+  border-left: 3px solid var(--accent);
+}
+.diff-header .commit-body {
+  margin: 8px 0 0;
+  padding: 6px 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text);
+  font-family: "Segoe UI", Roboto, system-ui, sans-serif;
+  font-size: 12px;
+  white-space: pre-wrap;
+  line-height: 1.5;
+}
+
+/* Section divider used inside the commit detail pane to separate
+   meta / files / diff blocks. */
+.section-bar {
+  padding: 6px 14px;
+  background: var(--bg-alt);
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  font-family: "Segoe UI", Roboto, system-ui, sans-serif;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* Per-file block inside the commit diff — a strong top accent separates
+   neighboring files, and a sticky header keeps the filename visible while
+   scrolling through a long patch. */
+.file-diff-block {
+  border-top: 3px solid var(--accent);
+}
+.file-diff-block:first-of-type { border-top: none; }
+.file-diff-header {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  padding: 6px 14px;
+  background: var(--bg-alt);
+  border-bottom: 1px solid var(--border);
+  font-family: "Segoe UI", Roboto, system-ui, sans-serif;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  color: var(--text-bright);
+}
+.file-diff-header .path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .diff-content {
   white-space: pre;
   padding: 8px 0;
