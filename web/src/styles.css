@@ -374,18 +374,37 @@ select {
   white-space: nowrap;
 }
 .diff-content {
-  white-space: pre;
   padding: 8px 0;
   line-height: 1.5;
 }
 .diff-line {
-  padding: 0 12px;
-  display: block;
+  display: flex;
+  align-items: flex-start;
+}
+.diff-line .ln {
+  flex: 0 0 auto;
+  width: 2.5em;
+  padding: 0 4px;
+  text-align: right;
+  color: var(--text-dim);
+  opacity: 0.6;
+  font-size: 0.9em;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.diff-line .ln-new { border-right: 1px solid var(--border); }
+.diff-line .code {
+  flex: 1 1 auto;
+  white-space: pre;
+  padding: 0 12px 0 8px;
+  min-width: 0;
 }
 .diff-line.add { background: var(--diff-add-bg); color: var(--diff-add-fg); }
 .diff-line.del { background: var(--diff-del-bg); color: var(--diff-del-fg); }
 .diff-line.hunk { background: var(--diff-hunk); color: #d7ba7d; }
+.diff-line.hunk .ln { opacity: 0; }
 .diff-line.file { color: var(--text-dim); }
+.diff-line.file .ln { opacity: 0; }
 .diff-empty {
   padding: 16px;
   color: var(--text-dim);
