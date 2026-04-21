@@ -4,3 +4,6 @@ dist/
 *.log
 .env
 .env.local
+
+# Local repo list — paths are machine-specific. Auto-generated on first run.
+config.json
