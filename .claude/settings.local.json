@@ -3,7 +3,16 @@
     "allow": [
       "Bash(git init *)",
       "Bash(git add *)",
-      "Bash(git -c user.email=dev@local -c user.name=dev commit -q -m \"chore: initial scaffold\")"
+      "Bash(git -c user.email=dev@local -c user.name=dev commit -q -m \"chore: initial scaffold\")",
+      "Bash(git -C /d/code/git-viewer log --oneline)",
+      "Bash(npm --version)",
+      "Bash(npm install *)",
+      "Bash(npm --prefix server install)",
+      "Bash(npm --prefix web install)",
+      "Bash(curl *)",
+      "Bash(netstat -ano)",
+      "Bash(taskkill *)",
+      "Bash(npm *)"
     ]
   }
 }

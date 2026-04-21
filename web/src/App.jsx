@@ -3,6 +3,7 @@ import { api } from './api.js';
 import { computeGraph } from './graph.js';
 import GraphCell from './components/GraphCell.jsx';
 import DiffView from './components/DiffView.jsx';
+import ReposDialog from './components/ReposDialog.jsx';
 
 const UNCOMMITTED = '__uncommitted__';
 
@@ -17,6 +18,7 @@ export default function App() {
   const [selection, setSelection] = useState(null); // { type: 'change'|'commit', ... }
   const [diff, setDiff] = useState(null);
   const [error, setError] = useState(null);
+  const [showRepoDialog, setShowRepoDialog] = useState(false);
 
   // Load repos on mount
   useEffect(() => {
@@ -95,7 +97,21 @@ export default function App() {
         )}
         <div className="spacer" />
         <button onClick={() => refresh()}>Refresh</button>
+        <button onClick={() => setShowRepoDialog(true)} title="管理仓库">⚙ 仓库</button>
       </div>
+      {showRepoDialog && (
+        <ReposDialog
+          repos={repos}
+          onClose={() => setShowRepoDialog(false)}
+          onChanged={(rs) => {
+            setRepos(rs);
+            // Keep current selection valid; if current repo was removed, switch to first available
+            if (repoId && !rs.find(r => r.id === repoId)) {
+              setRepoId(rs[0]?.id || null);
+            }
+          }}
+        />
+      )}
 
       <aside className="sidebar">
         <div className="repo-selector">

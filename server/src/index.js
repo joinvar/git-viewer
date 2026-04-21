@@ -1,6 +1,13 @@
 import express from 'express';
 import cors from 'cors';
-import { loadConfig } from './config.js';
+import {
+  loadConfig,
+  addRepo,
+  updateRepo,
+  deleteRepo,
+  reorderRepos,
+  validateRepoPath,
+} from './config.js';
 import {
   getStatus,
   getBranches,
@@ -10,13 +17,21 @@ import {
   getCommitFileDiff,
 } from './git.js';
 
-const config = loadConfig();
+// Boot-time port — re-reading port on every change would require a restart,
+// so we capture it once. Repos are re-read on every request.
+const boot = loadConfig();
+const PORT = boot.port;
+
 const app = express();
 app.use(cors());
 app.use(express.json());
 
+function currentRepos() {
+  return loadConfig().repos;
+}
+
 function findRepo(id) {
-  return config.repos.find(r => r.id === id);
+  return currentRepos().find(r => r.id === id);
 }
 
 function withRepo(handler) {
@@ -32,8 +47,57 @@ function withRepo(handler) {
   };
 }
 
+function publicRepo(r) {
+  return { id: r.id, name: r.name, path: r.path };
+}
+
 app.get('/api/repos', (req, res) => {
-  res.json(config.repos.map(({ id, name, path }) => ({ id, name, path })));
+  res.json(currentRepos().map(publicRepo));
+});
+
+app.post('/api/repos', (req, res) => {
+  try {
+    const { name, path } = req.body || {};
+    const cfg = addRepo({ name, path });
+    res.json(cfg.repos.map(publicRepo));
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.put('/api/repos/:id', (req, res) => {
+  try {
+    const { name, path } = req.body || {};
+    const cfg = updateRepo(req.params.id, { name, path });
+    res.json(cfg.repos.map(publicRepo));
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.delete('/api/repos/:id', (req, res) => {
+  try {
+    const cfg = deleteRepo(req.params.id);
+    res.json(cfg.repos.map(publicRepo));
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post('/api/repos/reorder', (req, res) => {
+  try {
+    const { ids } = req.body || {};
+    if (!Array.isArray(ids)) return res.status(400).json({ error: 'ids must be an array' });
+    const cfg = reorderRepos(ids);
+    res.json(cfg.repos.map(publicRepo));
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post('/api/validate-path', (req, res) => {
+  const { path } = req.body || {};
+  res.json(validateRepoPath(path));
 });
 
 app.get('/api/repos/:id/status', withRepo(async (repo, req, res) => {
@@ -64,7 +128,7 @@ app.get('/api/repos/:id/diff', withRepo(async (repo, req, res) => {
   }
 }));
 
-app.listen(config.port, () => {
-  console.log(`git-viewer server listening on http://localhost:${config.port}`);
-  console.log(`repos: ${config.repos.map(r => r.id).join(', ') || '(none)'}`);
+app.listen(PORT, () => {
+  console.log(`git-viewer server listening on http://localhost:${PORT}`);
+  console.log(`repos: ${currentRepos().map(r => r.id).join(', ') || '(none)'}`);
 });
