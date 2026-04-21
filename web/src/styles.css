@@ -107,8 +107,16 @@ select {
 .repo-selector {
   padding: 6px 10px;
   border-bottom: 1px solid var(--border);
+  display: flex;
+  gap: 6px;
+  align-items: center;
 }
-.repo-selector select { width: 100%; }
+.repo-selector select { flex: 1; min-width: 0; }
+.repo-selector .refresh-btn {
+  font-size: 15px;
+  line-height: 1;
+  padding: 2px 7px;
+}
 
 .changes-list {
   flex: 1;

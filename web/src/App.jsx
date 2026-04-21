@@ -161,6 +161,14 @@ export default function App() {
               <option key={r.id} value={r.id}>{r.name}</option>
             ))}
           </select>
+          <button
+            className="icon-btn refresh-btn"
+            onClick={() => refresh()}
+            disabled={!repoId}
+            title="刷新"
+          >
+            ↻
+          </button>
         </div>
 
         <div className="section-header">
