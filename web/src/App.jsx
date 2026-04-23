@@ -4,8 +4,10 @@ import { computeGraph } from './graph.js';
 import GraphCell from './components/GraphCell.jsx';
 import DiffView, { DiffLines } from './components/DiffView.jsx';
 import ReposDialog from './components/ReposDialog.jsx';
+import FileList from './components/FileList.jsx';
 
 const UNCOMMITTED = '__uncommitted__';
+const FILES_VIEW_KEY = 'git-viewer.filesView';
 
 export default function App() {
   const [repos, setRepos] = useState([]);
@@ -19,6 +21,14 @@ export default function App() {
   const [diff, setDiff] = useState(null);
   const [error, setError] = useState(null);
   const [showRepoDialog, setShowRepoDialog] = useState(false);
+  const [filesView, setFilesView] = useState(() => {
+    const v = typeof localStorage !== 'undefined' && localStorage.getItem(FILES_VIEW_KEY);
+    return v === 'tree' ? 'tree' : 'list';
+  });
+
+  useEffect(() => {
+    try { localStorage.setItem(FILES_VIEW_KEY, filesView); } catch {}
+  }, [filesView]);
 
   // Resizable layout widths
   const [sidebarWidth, setSidebarWidth] = useState(280);
@@ -201,6 +211,7 @@ export default function App() {
         <div className="section-header">
           <span>Changes</span>
           <span className="section-right">
+            <ViewToggle value={filesView} onChange={setFilesView} />
             {hasUncommitted && (
               <button
                 className="icon-btn discard-btn"
@@ -218,24 +229,28 @@ export default function App() {
           {status && status.files.length === 0 && (
             <div className="empty">工作区干净</div>
           )}
-          {status && status.files.map(f => (
-            <div
-              key={f.path}
-              className={`change-row ${selection?.type === 'change' && selection.file === f.path ? 'selected' : ''}`}
-              onClick={() => setSelection({ type: 'change', file: f.path })}
-              title={f.path}
-            >
-              <span className="file">{f.path}</span>
-              <button
-                className="icon-btn row-discard-btn"
-                title={`丢弃对 ${f.path} 的改动`}
-                onClick={e => { e.stopPropagation(); discardChange(f); }}
-              >
-                ↶
-              </button>
-              <span className={`code ${f.status}`}>{f.status}</span>
-            </div>
-          ))}
+          {status && status.files.length > 0 && (
+            <FileList
+              files={status.files}
+              mode={filesView}
+              isSelected={f => selection?.type === 'change' && selection.file === f.path}
+              onSelect={f => setSelection({ type: 'change', file: f.path })}
+              rowClass="change-row"
+              renderRow={(f, { label }) => (
+                <>
+                  <span className="file">{label}</span>
+                  <button
+                    className="icon-btn row-discard-btn"
+                    title={`丢弃对 ${f.path} 的改动`}
+                    onClick={e => { e.stopPropagation(); discardChange(f); }}
+                  >
+                    ↶
+                  </button>
+                  <span className={`code ${f.status}`}>{f.status}</span>
+                </>
+              )}
+            />
+          )}
         </div>
       </aside>
 
@@ -344,14 +359,20 @@ export default function App() {
             )}
           />
 
-          <DiffPanel selection={selection} diff={diff} status={status} setSelection={setSelection} />
+          <DiffPanel
+            selection={selection}
+            diff={diff}
+            status={status}
+            setSelection={setSelection}
+            filesView={filesView}
+          />
         </div>
       </div>
     </div>
   );
 }
 
-function DiffPanel({ selection, diff, status, setSelection }) {
+function DiffPanel({ selection, diff, status, setSelection, filesView }) {
   if (!selection) {
     return (
       <div className="diff-pane">
@@ -369,12 +390,18 @@ function DiffPanel({ selection, diff, status, setSelection }) {
           <div className="meta">{status?.files?.length || 0} 个文件有改动</div>
         </div>
         <div className="files-list">
-          {status?.files?.map(f => (
-            <div key={f.path} className="file-item" onClick={() => setSelection({ type: 'change', file: f.path })}>
-              <span className={`code ${f.status}`}>{f.status}</span>
-              <span>{f.path}</span>
-            </div>
-          ))}
+          <FileList
+            files={status?.files || []}
+            mode={filesView}
+            onSelect={f => setSelection({ type: 'change', file: f.path })}
+            rowClass="file-item"
+            renderRow={(f, { label }) => (
+              <>
+                <span className={`code ${f.status}`}>{f.status}</span>
+                <span>{label}</span>
+              </>
+            )}
+          />
         </div>
       </div>
     );
@@ -411,17 +438,18 @@ function DiffPanel({ selection, diff, status, setSelection }) {
         </div>
         <div className="section-bar">文件 ({c.files.length})</div>
         <div className="files-list">
-          {c.files.map(f => (
-            <div
-              key={f.path}
-              className="file-item"
-              onClick={() => scrollToFileDiff(f.path)}
-              title="跳转到此文件的差异"
-            >
-              <span className={`code ${f.status}`}>{f.status}</span>
-              <span>{f.path}</span>
-            </div>
-          ))}
+          <FileList
+            files={c.files}
+            mode={filesView}
+            onSelect={f => scrollToFileDiff(f.path)}
+            rowClass="file-item"
+            renderRow={(f, { label }) => (
+              <>
+                <span className={`code ${f.status}`}>{f.status}</span>
+                <span>{label}</span>
+              </>
+            )}
+          />
         </div>
         <div className="section-bar">差异</div>
         {fileDiffs.length === 0 && <div className="diff-empty">无差异</div>}
@@ -446,6 +474,37 @@ function DiffPanel({ selection, diff, status, setSelection }) {
   }
 
   return <div className="diff-pane"><div className="diff-empty">Unsupported</div></div>;
+}
+
+function ViewToggle({ value, onChange }) {
+  return (
+    <span className="view-toggle" title="切换文件列表显示方式">
+      <button
+        className={`icon-btn ${value === 'list' ? 'active' : ''}`}
+        onClick={() => onChange('list')}
+        title="列表视图"
+      >
+        <svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true">
+          <path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" strokeWidth="1.6" fill="none" strokeLinecap="round" />
+        </svg>
+      </button>
+      <button
+        className={`icon-btn ${value === 'tree' ? 'active' : ''}`}
+        onClick={() => onChange('tree')}
+        title="树视图"
+      >
+        <svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true">
+          <path
+            d="M2 3h4M4 3v9M4 7h4M4 11h4M9 6h5M9 10h5"
+            stroke="currentColor"
+            strokeWidth="1.4"
+            fill="none"
+            strokeLinecap="round"
+          />
+        </svg>
+      </button>
+    </span>
+  );
 }
 
 function startDrag(e, initial, min, max, onChange, sign) {

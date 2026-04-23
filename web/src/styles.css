@@ -177,6 +177,65 @@ select {
   padding: 0 6px;
 }
 .change-row:hover .row-discard-btn { visibility: visible; }
+
+/* File list tree view — directory row (shared by sidebar Changes list and
+   right-pane DiffPanel files-list via the FileList component). The row's
+   left padding is set inline to (base + depth * indent); chevron sits right
+   against that padding so the root rows hug the left edge. Gap matches the
+   file row (change-row / file-item) so a directory name and a file name at
+   the same depth align on the same x. */
+.file-tree-dir {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 12px;
+  cursor: pointer;
+  color: var(--text-dim);
+  user-select: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.file-tree-dir:hover { background: var(--bg-hover); color: var(--text); }
+.file-tree-dir .chevron {
+  width: 10px;
+  display: inline-block;
+  text-align: center;
+  font-size: 9px;
+  flex: 0 0 auto;
+}
+.file-tree-dir .name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Invisible placeholder on file rows in tree mode; matches the chevron
+   width so file names line up with directory names at the same depth. */
+.file-tree-spacer {
+  display: inline-block;
+  width: 10px;
+  flex: 0 0 auto;
+}
+
+/* List/tree toggle button group, sits in the Changes section header. */
+.view-toggle {
+  display: inline-flex;
+  gap: 0;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.view-toggle .icon-btn {
+  border-radius: 0;
+  padding: 1px 5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.view-toggle .icon-btn.active {
+  background: var(--bg-hover);
+  color: var(--text-bright);
+}
 .code.M { color: var(--modified); }
 .code.A { color: var(--added); }
 .code.D { color: var(--removed); }
