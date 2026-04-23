@@ -275,8 +275,9 @@ select {
 
 .log-pane {
   --log-graph-w: 48px;
-  --log-date-w: 140px;
-  --log-author-w: 140px;
+  --log-date-w: 120px;
+  --log-author-w: 80px;
+  --log-commit-w: 72px;
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -285,7 +286,7 @@ select {
 
 .log-header {
   display: grid;
-  grid-template-columns: var(--log-graph-w) 1fr var(--log-date-w) var(--log-author-w);
+  grid-template-columns: var(--log-graph-w) 1fr var(--log-date-w) var(--log-author-w) var(--log-commit-w);
   padding: 6px 20px 6px 10px;
   background: var(--bg-alt);
   border-bottom: 1px solid var(--border);
@@ -303,7 +304,7 @@ select {
 }
 .log-row {
   display: grid;
-  grid-template-columns: var(--log-graph-w) 1fr var(--log-date-w) var(--log-author-w);
+  grid-template-columns: var(--log-graph-w) 1fr var(--log-date-w) var(--log-author-w) var(--log-commit-w);
   padding: 4px 10px;
   cursor: pointer;
   border-bottom: 1px solid transparent;
@@ -327,14 +328,19 @@ select {
   text-overflow: ellipsis;
 }
 
-.log-row .date, .log-row .author {
+.log-row .date, .log-row .author, .log-row .commit {
   font-size: 12px;
   color: var(--text-dim);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.log-row.selected .date, .log-row.selected .author { color: var(--text); }
+.log-row .commit {
+  font-family: "Cascadia Code", Consolas, "SF Mono", Menlo, monospace;
+}
+.log-row.selected .date,
+.log-row.selected .author,
+.log-row.selected .commit { color: var(--text); }
 
 .ref-chip {
   display: inline-flex;

@@ -34,8 +34,9 @@ export default function App() {
   const [sidebarWidth, setSidebarWidth] = useState(280);
   const [logPaneWidth, setLogPaneWidth] = useState(null); // null → 50/50 default
   const [graphWidth, setGraphWidth] = useState(48);
-  const [dateWidth, setDateWidth] = useState(140);
-  const [authorWidth, setAuthorWidth] = useState(140);
+  const [dateWidth, setDateWidth] = useState(120);
+  const [authorWidth, setAuthorWidth] = useState(80);
+  const [commitWidth, setCommitWidth] = useState(72);
   const logPaneRef = useRef(null);
 
   // Load repos on mount
@@ -171,6 +172,7 @@ export default function App() {
     '--log-graph-w': `${effectiveGraphWidth}px`,
     '--log-date-w': `${dateWidth}px`,
     '--log-author-w': `${authorWidth}px`,
+    '--log-commit-w': `${commitWidth}px`,
   };
 
   return (
@@ -300,6 +302,7 @@ export default function App() {
               <span>Description</span>
               <span>Date</span>
               <span>Author</span>
+              <span>Commit</span>
             </div>
             <div
               className="resizer-col col-graph-desc"
@@ -308,13 +311,18 @@ export default function App() {
             />
             <div
               className="resizer-col col-desc-date"
-              style={{ right: `${dateWidth + authorWidth + 24}px` }}
+              style={{ right: `${dateWidth + authorWidth + commitWidth + 24}px` }}
               onMouseDown={e => startDrag(e, dateWidth, 60, 400, setDateWidth, -1)}
             />
             <div
               className="resizer-col col-date-author"
-              style={{ right: `${authorWidth + 24}px` }}
+              style={{ right: `${authorWidth + commitWidth + 24}px` }}
               onMouseDown={e => startDrag(e, authorWidth, 60, 400, setAuthorWidth, -1)}
+            />
+            <div
+              className="resizer-col col-author-commit"
+              style={{ right: `${commitWidth + 24}px` }}
+              onMouseDown={e => startDrag(e, commitWidth, 60, 300, setCommitWidth, -1)}
             />
             <div className="log-rows">
               {uncommittedVirtual && (
@@ -330,6 +338,7 @@ export default function App() {
                   </div>
                   <div className="date"></div>
                   <div className="author"></div>
+                  <div className="commit"></div>
                 </div>
               )}
               {filteredCommits.map((c, i) => (
@@ -354,6 +363,7 @@ export default function App() {
                   </div>
                   <div className="date">{formatDate(c.date)}</div>
                   <div className="author" title={c.author.email}>{c.author.name}</div>
+                  <div className="commit" title={c.hash}>{c.hash.slice(0, 8)}</div>
                 </div>
               ))}
               {filteredCommits.length === 0 && <div className="empty">无提交</div>}
