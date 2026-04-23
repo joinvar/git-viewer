@@ -122,9 +122,10 @@ export default function App() {
   const hasUncommitted = status && status.files && status.files.length > 0;
 
   // Uncommitted is rendered as a virtual commit at the top of the graph so
-  // computeGraph can wire HEAD into lane 0 — otherwise the line from the
-  // uncommitted dot down to its base commit can't pass through intermediate
-  // rows (e.g. stash entries) and shows up broken.
+  // computeGraph can wire HEAD into lane 0 — the dashed uncommitted lane runs
+  // all the way down to the HEAD commit, which is the relationship the user
+  // expects to see (working tree is "based on HEAD", not "above the topmost
+  // visible commit").
   const uncommittedVirtual = useMemo(() => {
     if (!hasUncommitted || branchFilter !== '__all__' || !log) return null;
     return {
@@ -148,6 +149,18 @@ export default function App() {
   );
   const commitRowOffset = uncommittedVirtual ? 1 : 0;
 
+  // Auto-fit the Graph column to the widest row of lanes so a many-branch
+  // repo doesn't bleed dots/curves under the Description column. `graphWidth`
+  // is the user's manual preference (only changed by dragging the resizer);
+  // `effectiveGraphWidth` is what we actually render with — clamped up to
+  // the min that fits maxLanes (14px/lane + 8px buffer). Users can still
+  // drag wider, but can't drag narrower than that minimum.
+  const minGraphWidth = useMemo(
+    () => Math.max(24, (maxLanes || 1) * 14 + 8),
+    [maxLanes]
+  );
+  const effectiveGraphWidth = Math.max(graphWidth, minGraphWidth);
+
   const appStyle = { gridTemplateColumns: `${sidebarWidth}px 4px 1fr` };
   const splitStyle = {
     gridTemplateColumns: logPaneWidth != null
@@ -155,7 +168,7 @@ export default function App() {
       : `1fr 4px 1fr`,
   };
   const logPaneStyle = {
-    '--log-graph-w': `${graphWidth}px`,
+    '--log-graph-w': `${effectiveGraphWidth}px`,
     '--log-date-w': `${dateWidth}px`,
     '--log-author-w': `${authorWidth}px`,
   };
@@ -290,8 +303,8 @@ export default function App() {
             </div>
             <div
               className="resizer-col col-graph-desc"
-              style={{ left: `${graphWidth + 2}px` }}
-              onMouseDown={e => startDrag(e, graphWidth, 24, 320, setGraphWidth, +1)}
+              style={{ left: `${effectiveGraphWidth + 2}px` }}
+              onMouseDown={e => startDrag(e, effectiveGraphWidth, minGraphWidth, 320, setGraphWidth, +1)}
             />
             <div
               className="resizer-col col-desc-date"
