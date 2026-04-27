@@ -19,6 +19,7 @@
   --diff-del-bg: #3a1b1b;
   --diff-del-fg: #f48771;
   --diff-hunk: #264f78;
+  --head-marker: #ffb454;
 
   color-scheme: dark;
 }
@@ -330,6 +331,10 @@ select {
   --git-graph-node-fill: var(--bg-selected);
 }
 .log-row.selected { color: var(--text-bright); }
+/* HEAD row: 3px amber accent bar on the left edge — works as a "current
+   line" bookmark when scrolling through long histories. Uses inset
+   box-shadow so it stacks cleanly with hover/selected backgrounds. */
+.log-row.head { box-shadow: inset 3px 0 0 0 var(--head-marker); }
 .log-row .graph { position: relative; height: 20px; pointer-events: none; }
 .log-row .graph svg { display: block; position: relative; z-index: 3; }
 
@@ -409,6 +414,16 @@ select {
 .ref-chip.head {
   --chip-bg: var(--accent);
   --chip-fg: #ffffff;
+}
+.ref-chip.head-chip {
+  --chip-bg: var(--head-marker);
+  --chip-fg: #1e1300;
+  box-shadow:
+    inset 0 0 0 1px rgba(0, 0, 0, 0.18),
+    0 0 0 1px rgba(255, 180, 84, 0.35);
+}
+.ref-chip.head-chip .ref-chip-icon {
+  background: rgba(0, 0, 0, 0.22);
 }
 .ref-chip.stash {
   --chip-bg: #e85dde;

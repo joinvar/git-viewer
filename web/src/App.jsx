@@ -353,13 +353,18 @@ export default function App() {
                 <div
                   key={c.hash}
                   data-graph-row={i + commitRowOffset}
-                  className={`log-row ${selection?.type === 'commit' && selection.sha === c.hash ? 'selected' : ''}`}
+                  className={[
+                    'log-row',
+                    selection?.type === 'commit' && selection.sha === c.hash ? 'selected' : '',
+                    c.isHead ? 'head' : '',
+                  ].filter(Boolean).join(' ')}
                   onClick={() => setSelection({ type: 'commit', sha: c.hash })}
                 >
                   <div className="graph">
                     <GraphCell row={graphRows[i + commitRowOffset]} commit={c} maxLanes={maxLanes} />
                   </div>
                   <div className="subject">
+                    {c.isHead && <HeadChip />}
                     {c.refs.map(refInfo => (
                       <RefChip
                         key={`${refInfo.kind}-${refInfo.name}`}
@@ -538,6 +543,20 @@ function ViewToggle({ value, onChange }) {
           />
         </svg>
       </button>
+    </span>
+  );
+}
+
+function HeadChip() {
+  return (
+    <span className="ref-chip head-chip" title="当前 HEAD 所在 commit">
+      <span className="ref-chip-icon" aria-hidden="true">
+        <svg width="10" height="10" viewBox="0 0 10 10">
+          <circle cx="5" cy="5" r="3.6" fill="none" stroke="currentColor" strokeWidth="1.2" />
+          <circle cx="5" cy="5" r="1.3" fill="currentColor" />
+        </svg>
+      </span>
+      <span className="ref-chip-label">HEAD</span>
     </span>
   );
 }

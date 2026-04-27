@@ -15,10 +15,18 @@ const H = 22;
 const DOT_R = GRAPH_DOT_RADIUS;
 const FILLED_DOT_R = GRAPH_FILLED_DOT_RADIUS;
 const NODE_FILL = 'var(--git-graph-node-fill, var(--bg))';
+// HEAD-only adornments: an amber halo ring around the dot plus a small
+// filled inner dot, forming a bullseye that's distinctive at a glance and
+// can't be confused with the hollow/filled convention used for ordinary
+// commits vs. stashes.
+const HEAD_HALO_R = DOT_R + 3.2;
+const HEAD_INNER_R = 1.5;
+const HEAD_COLOR = 'var(--head-marker, #ffb454)';
 
 export default function GraphCell({ row, commit, maxLanes }) {
   const { col, lanesBefore, lanesAfter, isStash } = row;
   const isUncommitted = !!commit.isUncommitted;
+  const isHead = !!commit.isHead;
   const totalLanes = Math.max(maxLanes, lanesAfter.length, lanesBefore.length, col + 1);
   const width = totalLanes * LANE_W + 4;
   const cx = col * LANE_W + LANE_W / 2;
@@ -33,6 +41,17 @@ export default function GraphCell({ row, commit, maxLanes }) {
 
   return (
     <svg width={width} height={H} style={{ overflow: 'visible' }}>
+      {isHead && (
+        <circle
+          cx={cx}
+          cy={cy}
+          r={HEAD_HALO_R}
+          fill="none"
+          stroke={HEAD_COLOR}
+          strokeWidth={1.4}
+          opacity={0.95}
+        />
+      )}
       <circle
         cx={cx}
         cy={cy}
@@ -41,6 +60,9 @@ export default function GraphCell({ row, commit, maxLanes }) {
         stroke={dotColor}
         strokeWidth={dotStrokeWidth}
       />
+      {isHead && !filled && (
+        <circle cx={cx} cy={cy} r={HEAD_INNER_R} fill={dotColor} />
+      )}
     </svg>
   );
 }
