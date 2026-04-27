@@ -155,7 +155,40 @@ export async function getLog(repoPath, { limit = 500, includeRemote = true } = {
     c.isHead = c.hash === head;
   });
 
-  return { head, commits: merged };
+  // Topologically regroup each stash to sit immediately above its first
+  // parent, instead of wherever its timestamp landed in the date-sorted
+  // stream. Stashes are side dots that belong next to the commit they were
+  // taken from — interleaving them by date can drop one into the middle of
+  // an unrelated feature branch and force the renderer to route its lane
+  // around the intervening commits.
+  return { head, commits: regroupStashes(merged) };
+}
+
+function regroupStashes(commits) {
+  const isStash = c => c.refs?.some(r => r.kind === 'stash');
+  const visible = new Set(commits.map(c => c.hash));
+
+  const stashesByParent = new Map();
+  const remaining = [];
+  for (const c of commits) {
+    const parent = c.parents[0];
+    if (isStash(c) && parent && visible.has(parent)) {
+      if (!stashesByParent.has(parent)) stashesByParent.set(parent, []);
+      stashesByParent.get(parent).push(c);
+    } else {
+      // Non-stashes and orphan stashes (parent not in the visible window)
+      // stay where they were in the date-sorted stream.
+      remaining.push(c);
+    }
+  }
+
+  const result = [];
+  for (const c of remaining) {
+    const grouped = stashesByParent.get(c.hash);
+    if (grouped) for (const s of grouped) result.push(s);
+    result.push(c);
+  }
+  return result;
 }
 
 function parseCommitLine(line) {

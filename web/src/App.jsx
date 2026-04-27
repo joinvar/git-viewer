@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from './api.js';
-import { computeGraph } from './graph.js';
+import { GRAPH_LANE_WIDTH, computeGraph, laneColor } from './graph.js';
 import GraphCell from './components/GraphCell.jsx';
+import GraphOverlay from './components/GraphOverlay.jsx';
 import DiffView, { DiffLines } from './components/DiffView.jsx';
 import ReposDialog from './components/ReposDialog.jsx';
 import FileList from './components/FileList.jsx';
@@ -38,6 +39,7 @@ export default function App() {
   const [authorWidth, setAuthorWidth] = useState(80);
   const [commitWidth, setCommitWidth] = useState(72);
   const logPaneRef = useRef(null);
+  const logRowsRef = useRef(null);
 
   // Load repos on mount
   useEffect(() => {
@@ -143,7 +145,11 @@ export default function App() {
     [uncommittedVirtual, filteredCommits]
   );
 
-  const graphRows = useMemo(() => computeGraph(graphCommits), [graphCommits]);
+  const graphRows = useMemo(() => computeGraph(graphCommits, log?.head), [graphCommits, log?.head]);
+  const graphRowsWithCommits = useMemo(
+    () => graphRows.map((row, i) => ({ ...row, commitHash: graphCommits[i]?.hash })),
+    [graphRows, graphCommits]
+  );
   const maxLanes = useMemo(
     () => graphRows.reduce((m, r) => Math.max(m, r.lanesBefore.length, r.lanesAfter.length), 0),
     [graphRows]
@@ -154,10 +160,10 @@ export default function App() {
   // repo doesn't bleed dots/curves under the Description column. `graphWidth`
   // is the user's manual preference (only changed by dragging the resizer);
   // `effectiveGraphWidth` is what we actually render with — clamped up to
-  // the min that fits maxLanes (14px/lane + 8px buffer). Users can still
+  // the min that fits maxLanes. Users can still
   // drag wider, but can't drag narrower than that minimum.
   const minGraphWidth = useMemo(
-    () => Math.max(24, (maxLanes || 1) * 14 + 8),
+    () => Math.max(32, (maxLanes || 1) * GRAPH_LANE_WIDTH + 12),
     [maxLanes]
   );
   const effectiveGraphWidth = Math.max(graphWidth, minGraphWidth);
@@ -324,9 +330,11 @@ export default function App() {
               style={{ right: `${commitWidth + 24}px` }}
               onMouseDown={e => startDrag(e, commitWidth, 60, 300, setCommitWidth, -1)}
             />
-            <div className="log-rows">
+            <div className="log-rows" ref={logRowsRef}>
+              <GraphOverlay rows={graphRowsWithCommits} maxLanes={maxLanes} containerRef={logRowsRef} />
               {uncommittedVirtual && (
                 <div
+                  data-graph-row={0}
                   className={`log-row ${selection?.type === 'uncommitted' ? 'selected' : ''}`}
                   onClick={() => setSelection({ type: 'uncommitted' })}
                 >
@@ -334,7 +342,7 @@ export default function App() {
                     <GraphCell row={graphRows[0]} commit={uncommittedVirtual} maxLanes={maxLanes} />
                   </div>
                   <div className="subject">
-                    <span className="ref-chip uncommitted">Uncommitted Changes ({status.files.length})</span>
+                    <span className="uncommitted-title">Uncommitted Changes ({status.files.length})</span>
                   </div>
                   <div className="date"></div>
                   <div className="author"></div>
@@ -344,6 +352,7 @@ export default function App() {
               {filteredCommits.map((c, i) => (
                 <div
                   key={c.hash}
+                  data-graph-row={i + commitRowOffset}
                   className={`log-row ${selection?.type === 'commit' && selection.sha === c.hash ? 'selected' : ''}`}
                   onClick={() => setSelection({ type: 'commit', sha: c.hash })}
                 >
@@ -351,13 +360,16 @@ export default function App() {
                     <GraphCell row={graphRows[i + commitRowOffset]} commit={c} maxLanes={maxLanes} />
                   </div>
                   <div className="subject">
-                    {c.refs.map(r => (
-                      <span
-                        key={`${r.kind}-${r.name}`}
-                        className={`ref-chip ${r.kind}${c.isHead && r.kind === 'local' ? ' head' : ''}`}
-                      >
-                        {r.name}
-                      </span>
+                    {c.refs.map(refInfo => (
+                      <RefChip
+                        key={`${refInfo.kind}-${refInfo.name}`}
+                        refInfo={refInfo}
+                        refs={c.refs}
+                        isHead={c.isHead}
+                        color={refInfo.kind === 'stash'
+                          ? laneColor(graphRows[i + commitRowOffset]?.col ?? 0)
+                          : null}
+                      />
                     ))}
                     <span className="text" title={c.subject}>{c.subject}</span>
                   </div>
@@ -528,6 +540,60 @@ function ViewToggle({ value, onChange }) {
       </button>
     </span>
   );
+}
+
+function RefChip({ refInfo, refs, isHead, color }) {
+  const className = [
+    'ref-chip',
+    refInfo.kind,
+    isHead && refInfo.kind === 'local' ? 'head' : '',
+  ].filter(Boolean).join(' ');
+  const style = color ? { '--chip-bg': color } : undefined;
+
+  return (
+    <span className={className} style={style} title={`${refInfo.kind}: ${refInfo.name}`}>
+      <RefIcon kind={refInfo.kind} />
+      <span className="ref-chip-label">{displayRefName(refInfo, refs)}</span>
+    </span>
+  );
+}
+
+function RefIcon({ kind }) {
+  if (kind === 'stash') {
+    return (
+      <span className="ref-chip-icon" aria-hidden="true">
+        <svg width="10" height="10" viewBox="0 0 10 10">
+          <path d="M2 2.5h6v5H2z" fill="none" stroke="currentColor" strokeWidth="1.3" />
+          <path d="M3.2 2.5V1.4h3.6v1.1" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+        </svg>
+      </span>
+    );
+  }
+
+  return (
+    <span className="ref-chip-icon" aria-hidden="true">
+      <svg width="10" height="10" viewBox="0 0 10 10">
+        <circle cx="2.2" cy="2.2" r="1.2" fill="currentColor" />
+        <circle cx="7.8" cy="7.8" r="1.2" fill="currentColor" />
+        <path d="M2.2 3.4v2.1c0 1.3 1 2.3 2.3 2.3h2.1M2.2 5.5h2c1.2 0 2.2-1 2.2-2.2V2.2" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+      </svg>
+    </span>
+  );
+}
+
+function displayRefName(refInfo, refs) {
+  if (refInfo.kind !== 'remote') return refInfo.name;
+
+  const slashIndex = refInfo.name.indexOf('/');
+  if (slashIndex === -1) return refInfo.name;
+
+  const remoteName = refInfo.name.slice(0, slashIndex);
+  const branchName = refInfo.name.slice(slashIndex + 1);
+  const hasMatchingLocal = refs.some(candidate => (
+    candidate.kind === 'local' && candidate.name === branchName
+  ));
+
+  return hasMatchingLocal ? remoteName : refInfo.name;
 }
 
 function startDrag(e, initial, min, max, onChange, sign) {
