@@ -86,6 +86,7 @@ export async function getLog(repoPath, { limit = 500, includeRemote = true } = {
     'log',
     `--pretty=format:%H%x01%P%x01%an%x01%ae%x01%aI%x01%s`,
     `-n${limit}`,
+    '--topo-order',
     '--branches',
     '--tags',
   ];
@@ -117,7 +118,9 @@ export async function getLog(repoPath, { limit = 500, includeRemote = true } = {
   }
 
   // Merge & dedupe (log shouldn't overlap with stash since we dropped --all,
-  // but keep defensive dedupe). Sort newest first by ISO date.
+  // but keep defensive dedupe). Preserve git's --topo-order: don't sort by
+  // date afterward, otherwise side-branch commits get re-interleaved with
+  // mainline by timestamp and the graph lines criss-cross.
   const seen = new Set();
   const merged = [];
   for (const c of [...logCommits, ...stashCommits]) {
@@ -125,7 +128,6 @@ export async function getLog(repoPath, { limit = 500, includeRemote = true } = {
     seen.add(c.hash);
     merged.push(c);
   }
-  merged.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
 
   // Attach refs (branches/tags/remotes). Skip refs/stash — stash entries get
   // their stash@{N} label applied below.
