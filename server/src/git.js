@@ -131,7 +131,10 @@ export async function getLog(repoPath, { limit = 500, includeRemote = true } = {
 
   // Attach refs (branches/tags/remotes). Skip refs/stash — stash entries get
   // their stash@{N} label applied below.
-  const refsRaw = await git.raw(['for-each-ref', '--format=%(objectname) %(refname:short) %(refname)']);
+  // Use lstrip=2 instead of :short so symbolic refs like refs/remotes/origin/HEAD
+  // come out as "origin/HEAD" instead of bare "origin" (which collides visually
+  // with the collapsed display of refs/remotes/origin/master).
+  const refsRaw = await git.raw(['for-each-ref', '--format=%(objectname) %(refname:lstrip=2) %(refname)']);
   const refsByCommit = new Map();
   refsRaw.split('\n').filter(Boolean).forEach(line => {
     const [sha, shortName, fullName] = line.split(' ');
