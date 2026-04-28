@@ -221,8 +221,19 @@ export async function getCommitDetail(repoPath, sha) {
   const parts = meta.replace(/\n$/, '').split('\x01');
   const [hash, parents, authorName, authorEmail, date, subject] = parts;
   const body = parts.slice(6).join('\x01').trim();
+  const parentList = parents ? parents.split(' ').filter(Boolean) : [];
 
-  const filesRaw = await git.raw(['show', '--name-status', '--format=', sha]);
+  // `git show` on a merge defaults to combined diff (--cc), which only emits
+  // files that differ from *every* parent — and the stash commit's own tree
+  // doesn't contain untracked files at all (they live in parent[2], the
+  // untracked-tree from `git stash -u`). Both effects hide the same files.
+  // `git stash show -u` walks both pieces (tracked diff vs base + untracked
+  // tree) and is exactly what other UIs use, so route stashes through it.
+  const stash = await isStashCommit(git, hash);
+
+  const filesRaw = stash
+    ? await git.raw(['stash', 'show', '-u', '--name-status', sha])
+    : await git.raw(['show', '--name-status', '--format=', sha]);
   const fileList = filesRaw.split('\n').filter(Boolean).map(line => {
     const [code, ...rest] = line.split('\t');
     return { status: code.charAt(0), path: rest.join('\t') };
@@ -230,11 +241,13 @@ export async function getCommitDetail(repoPath, sha) {
 
   // Skip `--stat` — the frontend already renders the file summary in its own
   // section, and parsing is cleaner when the output is pure `diff --git` blocks.
-  const diff = await git.raw(['show', '--format=', '--patch', sha]);
+  const diff = stash
+    ? await git.raw(['stash', 'show', '-u', '-p', sha])
+    : await git.raw(['show', '--format=', '--patch', sha]);
 
   return {
     hash,
-    parents: parents ? parents.split(' ').filter(Boolean) : [],
+    parents: parentList,
     author: { name: authorName, email: authorEmail },
     date,
     subject,
@@ -242,6 +255,10 @@ export async function getCommitDetail(repoPath, sha) {
     files: fileList,
     diff,
   };
+}
+
+async function isStashCommit(git, sha) {
+  return (await stashHashSet(git)).has(sha);
 }
 
 // Diff for a working-tree file (vs HEAD). For untracked files, show full content as +.
@@ -277,8 +294,49 @@ export async function getWorkingDiff(repoPath, file) {
 
 export async function getCommitFileDiff(repoPath, sha, file) {
   const git = getGit(repoPath);
+  // Stashes need special handling because `git show -- file` on a merge
+  // commit returns a combined diff that hides untracked files entirely
+  // (they aren't in the stash's own tree — they sit in parent[2]).
+  // `git stash show` doesn't accept a pathspec, so resolve the file's
+  // location ourselves: tracked file → diff parent[0]..sha; untracked
+  // file → show it from parent[2] (a root commit, so `git show` prints
+  // it as an addition).
+  if (await isStashCommit(git, sha)) {
+    const parents = (await git.raw(['rev-list', '--parents', '-n', '1', sha]))
+      .trim().split(' ').slice(1);
+    if (parents.length > 0) {
+      const inStashTree = await pathExistsInTree(git, sha, file);
+      if (inStashTree) {
+        const diff = await git.raw(['diff', parents[0], sha, '--', file]);
+        return { diff, file, sha };
+      }
+      const untrackedParent = parents[2];
+      if (untrackedParent && await pathExistsInTree(git, untrackedParent, file)) {
+        const diff = await git.raw(['show', untrackedParent, '--', file]);
+        return { diff, file, sha };
+      }
+    }
+  }
   const diff = await git.raw(['show', `${sha}`, '--', file]);
   return { diff, file, sha };
+}
+
+async function pathExistsInTree(git, ref, file) {
+  try {
+    await git.raw(['cat-file', '-e', `${ref}:${file}`]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function stashHashSet(git) {
+  try {
+    const raw = await git.raw(['stash', 'list', '--format=%H']);
+    return new Set(raw.split('\n').map(s => s.trim()).filter(Boolean));
+  } catch {
+    return new Set();
+  }
 }
 
 // Discard working-tree + index changes for one path.
