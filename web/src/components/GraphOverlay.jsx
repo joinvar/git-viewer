@@ -94,7 +94,9 @@ function rowCenterY(metrics, rowIndex) {
 }
 
 function rowBoundaryTop(metrics, rowIndex, cy) {
-  if (rowIndex <= 0) return cy - H / 2 - VPAD;
+  // Row 0 has no row above it; clamping topY to cy collapses any "incoming
+  // from above" segment so the topmost commit doesn't sprout a phantom stub.
+  if (rowIndex <= 0) return cy;
   return (rowCenterY(metrics, rowIndex - 1) + cy) / 2;
 }
 
