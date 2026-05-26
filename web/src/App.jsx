@@ -438,7 +438,8 @@ function DiffPanel({ selection, diff, status, setSelection, filesView }) {
             renderRow={(f, { label }) => (
               <>
                 <span className={`code ${f.status}`}>{f.status}</span>
-                <span>{label}</span>
+                <span className="fname">{label}</span>
+                <span className="file-size">{formatBytes(f.size)}</span>
               </>
             )}
           />
@@ -476,7 +477,7 @@ function DiffPanel({ selection, diff, status, setSelection, filesView }) {
           </div>
           {c.body && <pre className="commit-body">{c.body}</pre>}
         </div>
-        <div className="section-bar">文件 ({c.files.length})</div>
+        <div className="section-bar section-files">文件 ({c.files.length})</div>
         <div className="files-list">
           <FileList
             files={c.files}
@@ -486,12 +487,13 @@ function DiffPanel({ selection, diff, status, setSelection, filesView }) {
             renderRow={(f, { label }) => (
               <>
                 <span className={`code ${f.status}`}>{f.status}</span>
-                <span>{label}</span>
+                <span className="fname">{label}</span>
+                <span className="file-size">{formatBytes(f.size)}</span>
               </>
             )}
           />
         </div>
-        <div className="section-bar">差异</div>
+        <div className="section-bar section-diff">差异</div>
         {fileDiffs.length === 0 && <div className="diff-empty">无差异</div>}
         {fileDiffs.map(fd => {
           const st = statusByPath.get(fd.path) || 'M';
@@ -633,6 +635,16 @@ function startDrag(e, initial, min, max, onChange, sign) {
   window.addEventListener('mouseup', onUp);
   document.body.style.cursor = 'col-resize';
   document.body.style.userSelect = 'none';
+}
+
+function formatBytes(n) {
+  if (n == null) return '';
+  if (n < 1024) return `${n} B`;
+  const units = ['KB', 'MB', 'GB', 'TB'];
+  let v = n / 1024;
+  let i = 0;
+  while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+  return `${v < 10 ? v.toFixed(1) : Math.round(v)} ${units[i]}`;
 }
 
 function formatDate(iso) {

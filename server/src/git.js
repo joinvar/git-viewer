@@ -34,13 +34,22 @@ function mapStatusCode(index, workdir) {
 export async function getStatus(repoPath) {
   const git = getGit(repoPath);
   const s = await git.status();
-  const files = s.files.map(f => ({
-    path: f.path,
-    status: mapStatusCode(f.index, f.working_dir),
-    index: f.index,
-    workdir: f.working_dir,
-    staged: f.index !== ' ' && f.index !== '?',
-  }));
+  const files = s.files.map(f => {
+    const status = mapStatusCode(f.index, f.working_dir);
+    // Working-tree size from disk. Deleted files have no on-disk size.
+    let size = null;
+    if (status !== 'D') {
+      try { size = fs.statSync(path.join(repoPath, f.path)).size; } catch {}
+    }
+    return {
+      path: f.path,
+      status,
+      index: f.index,
+      workdir: f.working_dir,
+      staged: f.index !== ' ' && f.index !== '?',
+      size,
+    };
+  });
   return {
     branch: s.current,
     tracking: s.tracking,
@@ -239,6 +248,12 @@ export async function getCommitDetail(repoPath, sha) {
     return { status: code.charAt(0), path: rest.join('\t') };
   });
 
+  // Blob sizes for the changed files as they exist in this commit's tree.
+  // Deleted files (and untracked entries that live in a stash's parent tree)
+  // simply won't resolve here and keep size = null.
+  const sizes = await getBlobSizes(git, hash, fileList.map(f => f.path));
+  for (const f of fileList) f.size = sizes.get(f.path) ?? null;
+
   // Skip `--stat` — the frontend already renders the file summary in its own
   // section, and parsing is cleaner when the output is pure `diff --git` blocks.
   const diff = stash
@@ -259,6 +274,28 @@ export async function getCommitDetail(repoPath, sha) {
 
 async function isStashCommit(git, sha) {
   return (await stashHashSet(git)).has(sha);
+}
+
+// Resolve blob byte-sizes for a set of paths inside a tree-ish. Returns a
+// Map<path, size>; paths missing from the tree (e.g. deleted files) are absent.
+// `-z` keeps paths with tabs/newlines intact; `-l` adds the size column.
+async function getBlobSizes(git, treeish, paths) {
+  const sizes = new Map();
+  if (!paths.length) return sizes;
+  try {
+    const raw = await git.raw(['ls-tree', '-l', '-z', treeish, '--', ...paths]);
+    for (const entry of raw.split('\0')) {
+      if (!entry) continue;
+      // "<mode> <type> <object> <size>\t<path>"  (size is "-" for non-blobs)
+      const tab = entry.indexOf('\t');
+      if (tab === -1) continue;
+      const size = parseInt(entry.slice(0, tab).trim().split(/\s+/)[3], 10);
+      if (!Number.isNaN(size)) sizes.set(entry.slice(tab + 1), size);
+    }
+  } catch {
+    // Older git or unreadable tree — sizes stay unknown.
+  }
+  return sizes;
 }
 
 // Diff for a working-tree file (vs HEAD). For untracked files, show full content as +.

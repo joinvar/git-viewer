@@ -1,6 +1,7 @@
 :root {
   --bg: #1e1e1e;
   --bg-alt: #252526;
+  --bg-elevated: #2d2d30;
   --bg-hover: #2a2d2e;
   --bg-selected: #094771;
   --panel: #252526;
@@ -458,7 +459,9 @@ select {
 .diff-header.commit-meta {
   position: static;
   padding: 12px 14px;
+  background: var(--bg-elevated);
   border-left: 3px solid var(--accent);
+  border-bottom: none;
 }
 .diff-header .commit-body {
   margin: 8px 0 0;
@@ -486,6 +489,17 @@ select {
   color: var(--text-dim);
   text-transform: uppercase;
   letter-spacing: 0.5px;
+}
+/* The commit info + "文件" bar + file list read as one raised surface above
+   the darker diff zone. The "文件" bar belongs to that surface; the "差异"
+   bar starts the diff zone, so it sits flush under the raised panel's drop
+   shadow without its own top border fighting it. */
+.section-bar.section-files {
+  background: var(--bg-elevated);
+  border-top: none;
+}
+.section-bar.section-diff {
+  border-top: none;
 }
 
 /* Per-file block inside the commit diff — a strong top accent separates
@@ -553,7 +567,13 @@ select {
 
 .files-list {
   padding: 6px 0;
-  border-bottom: 1px solid var(--border);
+  background: var(--bg-elevated);
+  /* Dark edge + drop shadow lift this raised panel clear of the diff zone
+     below, so the file list no longer reads as a recess that blends into it. */
+  border-bottom: 1px solid #161616;
+  box-shadow: 0 5px 9px -5px rgba(0, 0, 0, 0.5);
+  position: relative;
+  z-index: 1;
   font-family: "Segoe UI", Roboto, system-ui, sans-serif;
   font-size: 12px;
 }
@@ -561,10 +581,25 @@ select {
   padding: 3px 12px;
   cursor: pointer;
   display: flex;
+  align-items: center;
   gap: 8px;
+}
+.files-list .file-item .fname {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.files-list .file-item .file-size {
+  flex: 0 0 auto;
+  margin-left: auto;
+  color: var(--text-dim);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
 }
 .files-list .file-item:hover { background: var(--bg-hover); }
 .files-list .file-item.selected { background: var(--bg-selected); color: var(--text-bright); }
+.files-list .file-item.selected .file-size { color: var(--text); }
 
 .error {
   padding: 16px;
