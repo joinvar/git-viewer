@@ -1,10 +1,20 @@
 import fs from 'node:fs';
+import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..', '..');
 const CONFIG_PATH = path.join(ROOT, 'config.json');
+const PATH_ACCESS_TIMEOUT_MS = 8_000;
+
+function withTimeout(promise, ms, message) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
 
 function slug(s) {
   return s ? String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') : '';
@@ -57,7 +67,7 @@ export function loadConfig() {
   };
 }
 
-export function validateRepoPath(p) {
+export async function validateRepoPath(p) {
   if (!p) return { ok: false, error: '路径不能为空' };
   let abs;
   try {
@@ -65,22 +75,45 @@ export function validateRepoPath(p) {
   } catch (e) {
     return { ok: false, error: `路径无效: ${e.message}` };
   }
-  if (!fs.existsSync(abs)) return { ok: false, error: `路径不存在: ${abs}` };
-  const stat = fs.statSync(abs);
-  if (!stat.isDirectory()) return { ok: false, error: `不是目录: ${abs}` };
-  // Either .git dir (worktree) or the path IS a bare repo
-  if (!fs.existsSync(path.join(abs, '.git')) && !fs.existsSync(path.join(abs, 'HEAD'))) {
+  try {
+    const stat = await withTimeout(
+      fsp.stat(abs),
+      PATH_ACCESS_TIMEOUT_MS,
+      `路径访问超时（${PATH_ACCESS_TIMEOUT_MS}ms）: ${abs}`,
+    );
+    if (!stat.isDirectory()) return { ok: false, error: `不是目录: ${abs}` };
+  } catch (e) {
+    if (e && /超时/.test(e.message)) return { ok: false, error: e.message };
+    return { ok: false, error: `路径不存在或不可达: ${abs}` };
+  }
+  // Either .git dir (worktree) or the path IS a bare repo. Root already
+  // responded, so use a short budget for metadata checks.
+  const metaMs = Math.min(PATH_ACCESS_TIMEOUT_MS, 3_000);
+  try {
+    await withTimeout(fsp.access(path.join(abs, '.git')), metaMs, 'git meta timeout');
+    return { ok: true, path: abs };
+  } catch (e) {
+    if (e && /超时/.test(e.message)) {
+      return { ok: false, error: `检查 .git 超时: ${abs}` };
+    }
+  }
+  try {
+    await withTimeout(fsp.access(path.join(abs, 'HEAD')), metaMs, 'git meta timeout');
+    return { ok: true, path: abs };
+  } catch (e) {
+    if (e && /超时/.test(e.message)) {
+      return { ok: false, error: `检查 git HEAD 超时: ${abs}` };
+    }
     return { ok: false, error: `不是 git 仓库（缺少 .git）: ${abs}` };
   }
-  return { ok: true, path: abs };
 }
 
 function toPosix(p) {
   return p.replace(/\\/g, '/');
 }
 
-export function addRepo({ name, path: p }) {
-  const check = validateRepoPath(p);
+export async function addRepo({ name, path: p }) {
+  const check = await validateRepoPath(p);
   if (!check.ok) throw new Error(check.error);
   const raw = readRaw();
   raw.repos = raw.repos || [];
@@ -90,14 +123,14 @@ export function addRepo({ name, path: p }) {
   return loadConfig();
 }
 
-export function updateRepo(id, { name, path: p }) {
+export async function updateRepo(id, { name, path: p }) {
   const cfg = loadConfig();
   const idx = cfg.repos.findIndex(r => r.id === id);
   if (idx === -1) throw new Error(`未知仓库: ${id}`);
   const raw = readRaw();
   const target = raw.repos[idx];
   if (p && p !== target.path) {
-    const check = validateRepoPath(p);
+    const check = await validateRepoPath(p);
     if (!check.ok) throw new Error(check.error);
     target.path = toPosix(check.path);
   }

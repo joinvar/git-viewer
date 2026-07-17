@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from './api.js';
 import { GRAPH_LANE_WIDTH, computeGraph, laneColor } from './graph.js';
 import GraphCell from './components/GraphCell.jsx';
@@ -9,6 +9,38 @@ import FileList from './components/FileList.jsx';
 
 const UNCOMMITTED = '__uncommitted__';
 const FILES_VIEW_KEY = 'git-viewer.filesView';
+const LAST_REPO_KEY = 'git-viewer.lastRepoId';
+
+function isAbortError(err) {
+  // Only treat intentional cancels as ignorable. Timeouts become plain Errors
+  // ("请求超时: …") and must surface in the UI.
+  return err?.name === 'AbortError' || err?.message === '请求已取消';
+}
+
+function readLastRepoId() {
+  try {
+    return localStorage.getItem(LAST_REPO_KEY) || null;
+  } catch {
+    return null;
+  }
+}
+
+function writeLastRepoId(id) {
+  try {
+    if (id) localStorage.setItem(LAST_REPO_KEY, id);
+    else localStorage.removeItem(LAST_REPO_KEY);
+  } catch {
+    // private mode / quota — ignore
+  }
+}
+
+/** Prefer the last-used repo if it still exists; otherwise first in list. */
+function pickDefaultRepoId(repos) {
+  if (!repos?.length) return null;
+  const last = readLastRepoId();
+  if (last && repos.some(r => r.id === last)) return last;
+  return repos[0].id;
+}
 
 export default function App() {
   const [repos, setRepos] = useState([]);
@@ -21,6 +53,7 @@ export default function App() {
   const [selection, setSelection] = useState(null); // { type: 'change'|'commit', ... }
   const [diff, setDiff] = useState(null);
   const [error, setError] = useState(null);
+  const [loading, setLoading] = useState(false);
   const [showRepoDialog, setShowRepoDialog] = useState(false);
   const [filesView, setFilesView] = useState(() => {
     const v = typeof localStorage !== 'undefined' && localStorage.getItem(FILES_VIEW_KEY);
@@ -30,6 +63,11 @@ export default function App() {
   useEffect(() => {
     try { localStorage.setItem(FILES_VIEW_KEY, filesView); } catch {}
   }, [filesView]);
+
+  // Remember the active project so browser refresh / server restart reopen it.
+  useEffect(() => {
+    if (repoId) writeLastRepoId(repoId);
+  }, [repoId]);
 
   // Resizable layout widths
   const [sidebarWidth, setSidebarWidth] = useState(280);
@@ -41,32 +79,114 @@ export default function App() {
   const logPaneRef = useRef(null);
   const logRowsRef = useRef(null);
 
-  // Load repos on mount
+  // In-flight request controllers — abort on repo switch / re-refresh so a
+  // slow/hung response from repo A never overwrites data for repo B.
+  const refreshCtrlRef = useRef(null);
+  const logCtrlRef = useRef(null);
+  const diffCtrlRef = useRef(null);
+  const showRemoteRef = useRef(showRemote);
+  showRemoteRef.current = showRemote;
+  const repoIdRef = useRef(repoId);
+  repoIdRef.current = repoId;
+
+  // Load repos on mount (with retry — backend may still be starting)
   useEffect(() => {
-    api.listRepos().then(rs => {
-      setRepos(rs);
-      if (rs.length) setRepoId(rs[0].id);
-    }).catch(e => setError(e.message));
+    let cancelled = false;
+    let attempt = 0;
+    const maxAttempts = 8;
+
+    async function loadRepos() {
+      while (!cancelled && attempt < maxAttempts) {
+        attempt += 1;
+        try {
+          const rs = await api.listRepos({ timeoutMs: 8_000 });
+          if (cancelled) return;
+          setRepos(rs);
+          setError(null);
+          if (rs.length) {
+            setRepoId(prev => {
+              // Keep an already-chosen id if still valid; else restore last session.
+              if (prev && rs.some(r => r.id === prev)) return prev;
+              return pickDefaultRepoId(rs);
+            });
+          }
+          return;
+        } catch (e) {
+          if (cancelled) return;
+          if (attempt >= maxAttempts) {
+            setError(`无法加载仓库列表: ${e.message}`);
+            return;
+          }
+          await new Promise(r => setTimeout(r, 500 * attempt));
+        }
+      }
+    }
+
+    loadRepos();
+    return () => { cancelled = true; };
   }, []);
 
-  // Load repo data when repo changes
-  useEffect(() => {
-    if (!repoId) return;
-    setStatus(null); setBranches(null); setLog(null); setSelection(null); setDiff(null);
-    refresh(repoId);
-  }, [repoId]);
-
-  function refresh(id = repoId) {
+  const refresh = useCallback((id = repoIdRef.current, { clear = false } = {}) => {
     if (!id) return;
-    Promise.all([
-      api.status(id),
-      api.branches(id),
-      api.log(id, { remote: showRemote }),
-    ]).then(([s, b, l]) => {
-      setStatus(s); setBranches(b); setLog(l);
-      setError(null);
-    }).catch(e => setError(e.message));
-  }
+    refreshCtrlRef.current?.abort();
+    logCtrlRef.current?.abort();
+    const ctrl = new AbortController();
+    refreshCtrlRef.current = ctrl;
+    const { signal } = ctrl;
+
+    if (clear) {
+      setStatus(null);
+      setBranches(null);
+      setLog(null);
+      setSelection(null);
+      setDiff(null);
+    }
+    setLoading(true);
+    setError(null);
+
+    const remote = showRemoteRef.current;
+    // Load independently so one slow endpoint (usually log) doesn't block
+    // status/branches from rendering.
+    const tasks = [
+      api.status(id, { signal }).then(s => {
+        if (signal.aborted || repoIdRef.current !== id) return;
+        setStatus(s);
+      }),
+      api.branches(id, { signal }).then(b => {
+        if (signal.aborted || repoIdRef.current !== id) return;
+        setBranches(b);
+      }),
+      api.log(id, { remote }, { signal }).then(l => {
+        if (signal.aborted || repoIdRef.current !== id) return;
+        setLog(l);
+      }),
+    ];
+
+    Promise.allSettled(tasks).then(results => {
+      // A newer refresh owns loading state once this one was aborted.
+      if (signal.aborted) return;
+      if (repoIdRef.current !== id) return;
+      setLoading(false);
+      const errors = results
+        .filter(r => r.status === 'rejected' && !isAbortError(r.reason))
+        .map(r => r.reason?.message || String(r.reason));
+      if (errors.length) {
+        setError(errors.join('；'));
+      } else {
+        setError(null);
+      }
+    });
+  }, []);
+
+  // Load repo data when repo changes — clear previous repo's data so we never
+  // briefly show the wrong project's commits under the new selection.
+  useEffect(() => {
+    if (!repoId) return undefined;
+    refresh(repoId, { clear: true });
+    return () => {
+      refreshCtrlRef.current?.abort();
+    };
+  }, [repoId, refresh]);
 
   function discardChange(f) {
     if (!repoId) return;
@@ -95,22 +215,55 @@ export default function App() {
       .catch(e => setError(e.message));
   }
 
-  // Reload log when showRemote changes
+  // Reload log when showRemote toggles. Intentionally NOT keyed on repoId —
+  // repo switches already load log via refresh().
+  const showRemoteBoot = useRef(true);
   useEffect(() => {
-    if (!repoId) return;
-    api.log(repoId, { remote: showRemote }).then(setLog).catch(e => setError(e.message));
+    if (showRemoteBoot.current) {
+      showRemoteBoot.current = false;
+      return undefined;
+    }
+    const id = repoIdRef.current;
+    if (!id) return undefined;
+    logCtrlRef.current?.abort();
+    const ctrl = new AbortController();
+    logCtrlRef.current = ctrl;
+    api.log(id, { remote: showRemote }, { signal: ctrl.signal })
+      .then(l => {
+        if (!ctrl.signal.aborted && repoIdRef.current === id) setLog(l);
+      })
+      .catch(e => {
+        if (!isAbortError(e)) setError(e.message);
+      });
+    return () => ctrl.abort();
   }, [showRemote]);
 
-  // Load diff for current selection
+  // Load diff for current selection — abort previous when selection changes.
   useEffect(() => {
-    if (!selection || !repoId) { setDiff(null); return; }
+    diffCtrlRef.current?.abort();
+    if (!selection || !repoId) { setDiff(null); return undefined; }
+
+    const ctrl = new AbortController();
+    diffCtrlRef.current = ctrl;
+    const { signal } = ctrl;
+    setDiff(null);
+
+    let req;
     if (selection.type === 'change') {
-      api.diff(repoId, selection.file).then(setDiff).catch(e => setError(e.message));
+      req = api.diff(repoId, selection.file, undefined, { signal });
     } else if (selection.type === 'commit') {
-      api.commit(repoId, selection.sha).then(setDiff).catch(e => setError(e.message));
+      req = api.commit(repoId, selection.sha, { signal });
     } else if (selection.type === 'commit-file') {
-      api.diff(repoId, selection.file, selection.sha).then(setDiff).catch(e => setError(e.message));
+      req = api.diff(repoId, selection.file, selection.sha, { signal });
+    } else {
+      return () => ctrl.abort();
     }
+
+    req
+      .then(d => { if (!signal.aborted) setDiff(d); })
+      .catch(e => { if (!isAbortError(e)) setError(e.message); });
+
+    return () => ctrl.abort();
   }, [selection, repoId]);
 
   const filteredCommits = useMemo(() => {
@@ -195,7 +348,10 @@ export default function App() {
           </span>
         )}
         <div className="spacer" />
-        <button onClick={() => refresh()}>Refresh</button>
+        {loading && <span className="loading-badge">加载中…</span>}
+        <button onClick={() => refresh()} disabled={!repoId || loading} title="重新加载当前仓库">
+          {loading ? '刷新中…' : 'Refresh'}
+        </button>
         <button onClick={() => setShowRepoDialog(true)} title="管理仓库">⚙ 仓库</button>
       </div>
       {showRepoDialog && (
@@ -204,9 +360,10 @@ export default function App() {
           onClose={() => setShowRepoDialog(false)}
           onChanged={(rs) => {
             setRepos(rs);
-            // Keep current selection valid; if current repo was removed, switch to first available
+            // Keep current selection valid; if current repo was removed, fall
+            // back to last-known-good or the first remaining entry.
             if (repoId && !rs.find(r => r.id === repoId)) {
-              setRepoId(rs[0]?.id || null);
+              setRepoId(pickDefaultRepoId(rs));
             }
           }}
         />
@@ -220,9 +377,9 @@ export default function App() {
             ))}
           </select>
           <button
-            className="icon-btn refresh-btn"
+            className={`icon-btn refresh-btn ${loading ? 'spinning' : ''}`}
             onClick={() => refresh()}
-            disabled={!repoId}
+            disabled={!repoId || loading}
             title="刷新"
           >
             ↻
@@ -246,7 +403,14 @@ export default function App() {
           </span>
         </div>
         <div className="changes-list">
-          {!status && <div className="empty">…</div>}
+          {!status && loading && <div className="empty">加载中…</div>}
+          {!status && !loading && error && (
+            <div className="empty error-hint">
+              加载失败
+              <button className="linkish" onClick={() => refresh()}>重试</button>
+            </div>
+          )}
+          {!status && !loading && !error && <div className="empty">…</div>}
           {status && status.files.length === 0 && (
             <div className="empty">工作区干净</div>
           )}
@@ -298,7 +462,12 @@ export default function App() {
             <input type="checkbox" checked={showRemote} onChange={e => setShowRemote(e.target.checked)} />
             Show Remote Branches
           </label>
-          {error && <span style={{ color: 'var(--conflict)' }}>Error: {error}</span>}
+          {error && (
+            <span className="toolbar-error" title={error}>
+              Error: {error}
+              <button className="linkish" onClick={() => refresh()}>重试</button>
+            </span>
+          )}
         </div>
 
         <div className="log-and-diff" style={splitStyle}>
@@ -383,7 +552,11 @@ export default function App() {
                   <div className="commit" title={c.hash}>{c.hash.slice(0, 8)}</div>
                 </div>
               ))}
-              {filteredCommits.length === 0 && <div className="empty">无提交</div>}
+              {filteredCommits.length === 0 && (
+                <div className="empty">
+                  {loading ? '加载提交历史…' : !log && error ? '提交历史加载失败' : '无提交'}
+                </div>
+              )}
             </div>
           </div>
 

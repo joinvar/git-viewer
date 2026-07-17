@@ -57,20 +57,20 @@ app.get('/api/repos', (req, res) => {
   res.json(currentRepos().map(publicRepo));
 });
 
-app.post('/api/repos', (req, res) => {
+app.post('/api/repos', async (req, res) => {
   try {
     const { name, path } = req.body || {};
-    const cfg = addRepo({ name, path });
+    const cfg = await addRepo({ name, path });
     res.json(cfg.repos.map(publicRepo));
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
 });
 
-app.put('/api/repos/:id', (req, res) => {
+app.put('/api/repos/:id', async (req, res) => {
   try {
     const { name, path } = req.body || {};
-    const cfg = updateRepo(req.params.id, { name, path });
+    const cfg = await updateRepo(req.params.id, { name, path });
     res.json(cfg.repos.map(publicRepo));
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -97,9 +97,18 @@ app.post('/api/repos/reorder', (req, res) => {
   }
 });
 
-app.post('/api/validate-path', (req, res) => {
+app.post('/api/validate-path', async (req, res) => {
   const { path } = req.body || {};
-  res.json(validateRepoPath(path));
+  try {
+    res.json(await validateRepoPath(path));
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// Liveness probe — never touches git / network paths.
+app.get('/api/health', (_req, res) => {
+  res.json({ ok: true, uptime: process.uptime() });
 });
 
 app.get('/api/repos/:id/status', withRepo(async (repo, req, res) => {
