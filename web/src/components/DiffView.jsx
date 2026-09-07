@@ -45,8 +45,12 @@ export default function DiffView({ title, meta, diff, empty, untracked, content,
 
 const HUNK_RE = /@@\s+-(\d+)(?:,\d+)?\s+\+(\d+)(?:,\d+)?\s+@@/;
 
+const MAX_DIFF_RENDER_LINES = 2500;
+
 export function DiffLines({ text }) {
-  const rawLines = (text || '').split('\n');
+  const allLines = (text || '').split('\n');
+  const truncated = allLines.length > MAX_DIFF_RENDER_LINES;
+  const rawLines = truncated ? allLines.slice(0, MAX_DIFF_RENDER_LINES) : allLines;
   let oldNo = 0;
   let newNo = 0;
   const rendered = rawLines.map((line, i) => {
@@ -83,7 +87,16 @@ export function DiffLines({ text }) {
       </div>
     );
   });
-  return <div className="diff-content">{rendered}</div>;
+  return (
+    <div className="diff-content">
+      {truncated && (
+        <div className="diff-empty">
+          只显示前 {MAX_DIFF_RENDER_LINES} 行，后面省略以免卡住。
+        </div>
+      )}
+      {rendered}
+    </div>
+  );
 }
 
 function DiffHeader({ title, meta }) {

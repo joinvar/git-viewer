@@ -302,6 +302,10 @@ function parseCommitLine(line) {
   };
 }
 
+// A single-file patch bigger than this is returned as a stub instead of text.
+// The UI lists the file; expanding 200KB+ of JSON as DOM nodes freezes the tab.
+export const MAX_FILE_DIFF_BYTES = 512 * 1024;
+
 export async function getCommitDetail(repoPath, sha) {
   return runGit(repoPath, async (git) => {
     // Metadata in its own call with `-s` (no patch). `%b` may span multiple
@@ -330,7 +334,10 @@ export async function getCommitDetail(repoPath, sha) {
       : await git.raw(['show', '--name-status', '--format=', sha]);
     const fileList = filesRaw.split('\n').filter(Boolean).map(line => {
       const [code, ...rest] = line.split('\t');
-      return { status: code.charAt(0), path: rest.join('\t') };
+      const status = code.charAt(0);
+      // rename/copy: `old\tnew` — keep the destination path for size lookup.
+      const path = rest.length > 1 ? rest[rest.length - 1] : rest.join('\t');
+      return { status, path };
     });
 
     // Blob sizes for the changed files as they exist in this commit's tree.
@@ -339,12 +346,10 @@ export async function getCommitDetail(repoPath, sha) {
     const sizes = await getBlobSizes(git, hash, fileList.map(f => f.path));
     for (const f of fileList) f.size = sizes.get(f.path) ?? null;
 
-    // Skip `--stat` — the frontend already renders the file summary in its own
-    // section, and parsing is cleaner when the output is pure `diff --git` blocks.
-    const diff = stash
-      ? await git.raw(['stash', 'show', '-u', '-p', sha])
-      : await git.raw(['show', '--format=', '--patch', sha]);
-
+    // Do not fetch the combined patch here. Huge commits (hundreds of thousands
+    // of JSON lines) would freeze the browser if we shipped every file's diff
+    // in one response. The UI lists files first; a per-file diff is loaded
+    // only when the user clicks one.
     return {
       hash,
       parents: parentList,
@@ -353,9 +358,8 @@ export async function getCommitDetail(repoPath, sha) {
       subject,
       body,
       files: fileList,
-      diff,
     };
-  }, { timeout: GIT_LOG_TIMEOUT_MS });
+  });
 }
 
 async function isStashCommit(git, sha) {
@@ -429,25 +433,40 @@ export async function getCommitFileDiff(repoPath, sha, file) {
     // location ourselves: tracked file → diff parent[0]..sha; untracked
     // file → show it from parent[2] (a root commit, so `git show` prints
     // it as an addition).
+    let diff = '';
     if (await isStashCommit(git, sha)) {
       const parents = (await git.raw(['rev-list', '--parents', '-n', '1', sha]))
         .trim().split(' ').slice(1);
       if (parents.length > 0) {
         const inStashTree = await pathExistsInTree(git, sha, file);
         if (inStashTree) {
-          const diff = await git.raw(['diff', parents[0], sha, '--', file]);
-          return { diff, file, sha };
+          diff = await git.raw(['diff', parents[0], sha, '--', file]);
+          return { file, sha, ...classifyDiff(diff) };
         }
         const untrackedParent = parents[2];
         if (untrackedParent && await pathExistsInTree(git, untrackedParent, file)) {
-          const diff = await git.raw(['show', untrackedParent, '--', file]);
-          return { diff, file, sha };
+          diff = await git.raw(['show', '--format=', '--patch', untrackedParent, '--', file]);
+          return { file, sha, ...classifyDiff(diff) };
         }
       }
     }
-    const diff = await git.raw(['show', `${sha}`, '--', file]);
-    return { diff, file, sha };
+    diff = await git.raw(['show', '--format=', '--patch', sha, '--', file]);
+    return { file, sha, ...classifyDiff(diff) };
   });
+}
+
+function classifyDiff(diff) {
+  const text = diff || '';
+  const binary = text.includes('\0')
+    || /^(?:GIT binary patch|Binary files )/m.test(text);
+  if (binary) {
+    return { diff: '', binary: true, truncated: false };
+  }
+  const byteSize = Buffer.byteLength(text, 'utf8');
+  if (byteSize > MAX_FILE_DIFF_BYTES) {
+    return { diff: '', binary: false, truncated: true, byteSize };
+  }
+  return { diff: text, binary: false, truncated: false };
 }
 
 async function pathExistsInTree(git, ref, file) {

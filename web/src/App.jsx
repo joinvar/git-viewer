@@ -52,6 +52,7 @@ export default function App() {
   const [showRemote, setShowRemote] = useState(true);
   const [selection, setSelection] = useState(null); // { type: 'change'|'commit', ... }
   const [diff, setDiff] = useState(null);
+  const [commitDetail, setCommitDetail] = useState(null);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
   const [showRepoDialog, setShowRepoDialog] = useState(false);
@@ -84,6 +85,7 @@ export default function App() {
   const refreshCtrlRef = useRef(null);
   const logCtrlRef = useRef(null);
   const diffCtrlRef = useRef(null);
+  const commitDetailRef = useRef(null);
   const showRemoteRef = useRef(showRemote);
   showRemoteRef.current = showRemote;
   const repoIdRef = useRef(repoId);
@@ -140,6 +142,7 @@ export default function App() {
       setLog(null);
       setSelection(null);
       setDiff(null);
+      setCommitDetail(null);
     }
     setLoading(true);
     setError(null);
@@ -238,31 +241,74 @@ export default function App() {
     return () => ctrl.abort();
   }, [showRemote]);
 
-  // Load diff for current selection — abort previous when selection changes.
+  commitDetailRef.current = commitDetail;
+
+  // Load commit meta and/or a single-file diff for the current selection.
+  // Commit clicks only fetch the file list; a patch is loaded when the user
+  // picks one file, so a 600k-line commit cannot freeze the tab.
   useEffect(() => {
     diffCtrlRef.current?.abort();
-    if (!selection || !repoId) { setDiff(null); return undefined; }
+    if (!selection || !repoId) {
+      setDiff(null);
+      setCommitDetail(null);
+      return undefined;
+    }
 
     const ctrl = new AbortController();
     diffCtrlRef.current = ctrl;
     const { signal } = ctrl;
-    setDiff(null);
 
-    let req;
     if (selection.type === 'change') {
-      req = api.diff(repoId, selection.file, undefined, { signal });
-    } else if (selection.type === 'commit') {
-      req = api.commit(repoId, selection.sha, { signal });
-    } else if (selection.type === 'commit-file') {
-      req = api.diff(repoId, selection.file, selection.sha, { signal });
-    } else {
+      setCommitDetail(null);
+      setDiff(null);
+      api.diff(repoId, selection.file, undefined, { signal })
+        .then(d => { if (!signal.aborted) setDiff(d); })
+        .catch(e => { if (!isAbortError(e)) setError(e.message); });
       return () => ctrl.abort();
     }
 
-    req
-      .then(d => { if (!signal.aborted) setDiff(d); })
-      .catch(e => { if (!isAbortError(e)) setError(e.message); });
+    if (selection.type === 'commit') {
+      const run = async () => {
+        try {
+          let detail = commitDetailRef.current;
+          if (detail?.hash !== selection.sha) {
+            setCommitDetail(null);
+            setDiff(null);
+            detail = await api.commit(repoId, selection.sha, { signal });
+            if (signal.aborted) return;
+            setCommitDetail(detail);
+          }
+          if (!selection.file) {
+            if (!signal.aborted) setDiff(null);
+            return;
+          }
+          const meta = detail.files.find(f => f.path === selection.file);
+          const skip = shouldSkipFileDiff(meta);
+          if (skip) {
+            if (!signal.aborted) {
+              setDiff({
+                file: selection.file,
+                skipped: skip,
+                size: meta?.size ?? null,
+                binary: skip === 'binary',
+                truncated: skip === 'too-large',
+              });
+            }
+            return;
+          }
+          setDiff(null);
+          const d = await api.diff(repoId, selection.file, selection.sha, { signal });
+          if (!signal.aborted) setDiff(d);
+        } catch (e) {
+          if (!isAbortError(e)) setError(e.message);
+        }
+      };
+      run();
+      return () => ctrl.abort();
+    }
 
+    setDiff(null);
+    setCommitDetail(null);
     return () => ctrl.abort();
   }, [selection, repoId]);
 
@@ -575,6 +621,7 @@ export default function App() {
           <DiffPanel
             selection={selection}
             diff={diff}
+            commitDetail={commitDetail}
             status={status}
             setSelection={setSelection}
             filesView={filesView}
@@ -585,7 +632,7 @@ export default function App() {
   );
 }
 
-function DiffPanel({ selection, diff, status, setSelection, filesView }) {
+function DiffPanel({ selection, diff, commitDetail, status, setSelection, filesView }) {
   if (!selection) {
     return (
       <div className="diff-pane">
@@ -621,9 +668,8 @@ function DiffPanel({ selection, diff, status, setSelection, filesView }) {
     );
   }
 
-  if (!diff) return <div className="diff-pane"><div className="diff-empty">加载中…</div></div>;
-
   if (selection.type === 'change') {
+    if (!diff) return <div className="diff-pane"><div className="diff-empty">加载中…</div></div>;
     return (
       <DiffView
         title={selection.file}
@@ -637,9 +683,13 @@ function DiffPanel({ selection, diff, status, setSelection, filesView }) {
   }
 
   if (selection.type === 'commit') {
-    const c = diff;
-    const fileDiffs = splitPatchByFile(c.diff);
-    const statusByPath = new Map(c.files.map(f => [f.path, f.status]));
+    if (!commitDetail) {
+      return <div className="diff-pane"><div className="diff-empty">加载中…</div></div>;
+    }
+    const c = commitDetail;
+    const selectedMeta = selection.file
+      ? c.files.find(f => f.path === selection.file)
+      : null;
     return (
       <div className="diff-pane">
         <div className="diff-header commit-meta">
@@ -650,12 +700,13 @@ function DiffPanel({ selection, diff, status, setSelection, filesView }) {
           </div>
           {c.body && <pre className="commit-body">{c.body}</pre>}
         </div>
-        <div className="section-bar section-files">文件 ({c.files.length})</div>
+        <div className="section-bar section-files">文件 ({c.files.length}) · 点文件查看差异</div>
         <div className="files-list">
           <FileList
             files={c.files}
             mode={filesView}
-            onSelect={f => scrollToFileDiff(f.path)}
+            isSelected={f => selection.file === f.path}
+            onSelect={f => setSelection({ type: 'commit', sha: selection.sha, file: f.path })}
             rowClass="file-item"
             renderRow={(f, { label }) => (
               <>
@@ -667,28 +718,49 @@ function DiffPanel({ selection, diff, status, setSelection, filesView }) {
           />
         </div>
         <div className="section-bar section-diff">差异</div>
-        {fileDiffs.length === 0 && <div className="diff-empty">无差异</div>}
-        {fileDiffs.map(fd => {
-          const st = statusByPath.get(fd.path) || 'M';
-          return (
-            <section
-              key={fd.path}
-              id={fileDiffId(fd.path)}
-              className="file-diff-block"
-            >
-              <div className="file-diff-header">
-                <span className={`code ${st}`}>{st}</span>
-                <span className="path">{fd.path}</span>
-              </div>
-              <DiffLines text={fd.patch} />
-            </section>
-          );
-        })}
+        <CommitFileDiff
+          file={selection.file}
+          meta={selectedMeta}
+          diff={diff}
+        />
       </div>
     );
   }
 
   return <div className="diff-pane"><div className="diff-empty">Unsupported</div></div>;
+}
+
+function CommitFileDiff({ file, meta, diff }) {
+  if (!file) {
+    return <div className="diff-empty">点上面的文件查看差异</div>;
+  }
+  if (!diff) {
+    return <div className="diff-empty">加载中…</div>;
+  }
+  if (diff.binary || diff.skipped === 'binary') {
+    return <div className="diff-empty">二进制文件，不显示差异。</div>;
+  }
+  if (diff.truncated || diff.skipped === 'too-large') {
+    const n = diff.size ?? diff.byteSize;
+    return (
+      <div className="diff-empty">
+        文件太大{n != null ? `（${formatBytes(n)}）` : ''}，不展开差异，以免卡住页面。
+      </div>
+    );
+  }
+  if (!diff.diff || !diff.diff.trim()) {
+    return <div className="diff-empty">无差异</div>;
+  }
+  const st = meta?.status || 'M';
+  return (
+    <section className="file-diff-block">
+      <div className="file-diff-header">
+        <span className={`code ${st}`}>{st}</span>
+        <span className="path">{file}</span>
+      </div>
+      <DiffLines text={diff.diff} />
+    </section>
+  );
 }
 
 function ViewToggle({ value, onChange }) {
@@ -820,6 +892,24 @@ function formatBytes(n) {
   return `${v < 10 ? v.toFixed(1) : Math.round(v)} ${units[i]}`;
 }
 
+// Match server MAX_FILE_DIFF_BYTES. Added files this big become a whole-file
+// patch; listing them is fine, rendering them as DOM lines is not.
+const MAX_FILE_DIFF_BYTES = 512 * 1024;
+const BINARY_PATH_RE = /\.(onnx|pt|pth|dll|exe|so|dylib|bin|joblib|png|jpe?g|gif|webp|ico|pdf|zip|7z|gz|tgz|rar|woff2?|ttf|eot|mp4|mov|avi|npy|npz|pkl|pickle|safetensors)$/i;
+
+function shouldSkipFileDiff(file) {
+  if (!file) return null;
+  if (BINARY_PATH_RE.test(file.path)) return 'binary';
+  if (
+    (file.status === 'A' || file.status === 'C' || file.status === 'U')
+    && file.size != null
+    && file.size > MAX_FILE_DIFF_BYTES
+  ) {
+    return 'too-large';
+  }
+  return null;
+}
+
 function formatDate(iso) {
   if (!iso) return '';
   const d = new Date(iso);
@@ -833,38 +923,6 @@ function findBranchTip(branches, filter) {
   const [kind, name] = filter.split(':');
   const list = kind === 'local' ? branches.local : branches.remote;
   return list.find(b => b.name === name)?.commit;
-}
-
-// Split `git show --patch` output into per-file blocks, keyed by the
-// destination path (`b/<path>` in the `diff --git` marker).
-function splitPatchByFile(text) {
-  if (!text) return [];
-  const positions = [];
-  const re = /^diff --git /gm;
-  let m;
-  while ((m = re.exec(text)) !== null) positions.push(m.index);
-  if (!positions.length) return [];
-  const chunks = [];
-  for (let i = 0; i < positions.length; i++) {
-    const start = positions[i];
-    const end = i + 1 < positions.length ? positions[i + 1] : text.length;
-    const block = text.slice(start, end);
-    const firstLine = block.split('\n', 1)[0];
-    // diff --git a/<old> b/<new> — paths may be quoted when they contain spaces.
-    const match = firstLine.match(/^diff --git (?:"a\/(.+?)"|a\/(\S+)) (?:"b\/(.+?)"|b\/(.+))$/);
-    const path = match ? (match[3] || match[4]) : firstLine.replace(/^diff --git /, '');
-    chunks.push({ path, patch: block });
-  }
-  return chunks;
-}
-
-function fileDiffId(path) {
-  return `diff-file-${path}`;
-}
-
-function scrollToFileDiff(path) {
-  const el = document.getElementById(fileDiffId(path));
-  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 function filterAncestors(commits, tip) {
