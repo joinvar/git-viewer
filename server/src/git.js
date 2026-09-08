@@ -145,9 +145,14 @@ export async function getStatus(repoPath) {
 
 export async function getBranches(repoPath) {
   return runGit(repoPath, async (git) => {
-    const [local, remote] = await Promise.all([
+    const [local, remote, tagsRaw] = await Promise.all([
       git.branchLocal(),
       git.branch(['-r']),
+      git.raw([
+        'for-each-ref',
+        '--format=%(objectname)%01%(*objectname)%01%(refname:lstrip=2)',
+        'refs/tags',
+      ]),
     ]);
     const locals = Object.values(local.branches).map(b => ({
       name: b.name,
@@ -165,7 +170,13 @@ export async function getBranches(repoPath) {
         label: b.label,
         kind: 'remote',
       }));
-    return { local: locals, remote: remotes, current: local.current };
+    const tags = tagsRaw.split('\n').filter(Boolean).flatMap(line => {
+      const [objectName, peeledName, name] = line.split('\x01');
+      const commit = peeledName || objectName;
+      if (!name || !commit) return [];
+      return [{ name, current: false, commit, kind: 'tag' }];
+    });
+    return { local: locals, remote: remotes, tags, current: local.current };
   });
 }
 
@@ -228,10 +239,19 @@ export async function getLog(repoPath, { limit = 500, includeRemote = true } = {
     // Use lstrip=2 instead of :short so symbolic refs like refs/remotes/origin/HEAD
     // come out as "origin/HEAD" instead of bare "origin" (which collides visually
     // with the collapsed display of refs/remotes/origin/master).
-    const refsRaw = await git.raw(['for-each-ref', '--format=%(objectname) %(refname:lstrip=2) %(refname)']);
+    //
+    // Annotated tags must be peeled: %(objectname) is the tag object itself,
+    // which never matches a commit in the log, so chips would never appear.
+    // %(*objectname) is the pointed-to commit for annotated tags, and empty
+    // for branches / lightweight tags. %01 so tag names with spaces still parse.
+    const refsRaw = await git.raw([
+      'for-each-ref',
+      '--format=%(objectname)%01%(*objectname)%01%(refname:lstrip=2)%01%(refname)',
+    ]);
     const refsByCommit = new Map();
     refsRaw.split('\n').filter(Boolean).forEach(line => {
-      const [sha, shortName, fullName] = line.split(' ');
+      const [objectName, peeledName, shortName, fullName] = line.split('\x01');
+      const sha = peeledName || objectName;
       if (!sha) return;
       if (fullName === 'refs/stash') return;
       const kind = fullName?.startsWith('refs/remotes/')
@@ -249,8 +269,12 @@ export async function getLog(repoPath, { limit = 500, includeRemote = true } = {
     }
 
     const head = (await git.raw(['rev-parse', 'HEAD'])).trim();
+    const kindOrder = { local: 0, tag: 1, remote: 2, stash: 3 };
     merged.forEach(c => {
-      c.refs = refsByCommit.get(c.hash) || [];
+      c.refs = (refsByCommit.get(c.hash) || []).sort((a, b) =>
+        (kindOrder[a.kind] ?? 9) - (kindOrder[b.kind] ?? 9)
+        || a.name.localeCompare(b.name)
+      );
       c.isHead = c.hash === head;
     });
 

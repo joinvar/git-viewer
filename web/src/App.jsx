@@ -502,6 +502,9 @@ export default function App() {
               {showRemote && branches?.remote.map(b => (
                 <option key={`R-${b.name}`} value={`remote:${b.name}`}>{b.name}</option>
               ))}
+              {branches?.tags?.map(t => (
+                <option key={`T-${t.name}`} value={`tag:${t.name}`}>tag: {t.name}</option>
+              ))}
             </select>
           </label>
           <label>
@@ -836,6 +839,20 @@ function RefIcon({ kind }) {
     );
   }
 
+  if (kind === 'tag') {
+    return (
+      <span className="ref-chip-icon" aria-hidden="true">
+        <svg width="10" height="10" viewBox="0 0 16 16">
+          <path
+            fill="currentColor"
+            fillRule="evenodd"
+            d="M7.7 2.15 1.85 8a1.3 1.3 0 0 0 0 1.84l4.31 4.31a1.3 1.3 0 0 0 1.84 0L14 8.15V2.15H7.7ZM11.15 5.3a1.15 1.15 0 1 0 0-2.3 1.15 1.15 0 0 0 0 2.3Z"
+          />
+        </svg>
+      </span>
+    );
+  }
+
   return (
     <span className="ref-chip-icon" aria-hidden="true">
       <svg width="10" height="10" viewBox="0 0 10 10">
@@ -920,9 +937,18 @@ function formatDate(iso) {
 
 function findBranchTip(branches, filter) {
   if (!branches || !filter) return null;
-  const [kind, name] = filter.split(':');
-  const list = kind === 'local' ? branches.local : branches.remote;
-  return list.find(b => b.name === name)?.commit;
+  const colon = filter.indexOf(':');
+  if (colon === -1) return null;
+  const kind = filter.slice(0, colon);
+  const name = filter.slice(colon + 1);
+  const list = kind === 'local'
+    ? branches.local
+    : kind === 'remote'
+      ? branches.remote
+      : kind === 'tag'
+        ? branches.tags
+        : null;
+  return list?.find(b => b.name === name)?.commit;
 }
 
 function filterAncestors(commits, tip) {
