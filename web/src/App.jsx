@@ -10,6 +10,39 @@ import FileList from './components/FileList.jsx';
 const UNCOMMITTED = '__uncommitted__';
 const FILES_VIEW_KEY = 'git-viewer.filesView';
 const LAST_REPO_KEY = 'git-viewer.lastRepoId';
+const SHORT_HASH_LEN = 8;
+
+function displayedHash(hash) {
+  return hash.slice(0, SHORT_HASH_LEN);
+}
+
+function copyTextFallback(text) {
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.setAttribute('readonly', '');
+  ta.style.position = 'fixed';
+  ta.style.top = '0';
+  ta.style.left = '-9999px';
+  document.body.appendChild(ta);
+  ta.select();
+  let ok = false;
+  try {
+    ok = document.execCommand('copy');
+  } catch {
+    ok = false;
+  }
+  document.body.removeChild(ta);
+  return ok;
+}
+
+function copyText(text) {
+  if (navigator.clipboard?.writeText) {
+    return navigator.clipboard.writeText(text)
+      .then(() => true)
+      .catch(() => copyTextFallback(text));
+  }
+  return Promise.resolve(copyTextFallback(text));
+}
 
 function isAbortError(err) {
   // Only treat intentional cancels as ignorable. Timeouts become plain Errors
@@ -79,6 +112,20 @@ export default function App() {
   const [commitWidth, setCommitWidth] = useState(72);
   const logPaneRef = useRef(null);
   const logRowsRef = useRef(null);
+  const [copyToast, setCopyToast] = useState(null);
+  const copyToastTimerRef = useRef(null);
+
+  const copyDisplayedHash = useCallback(async (hash) => {
+    const text = displayedHash(hash);
+    const ok = await copyText(text);
+    if (copyToastTimerRef.current) clearTimeout(copyToastTimerRef.current);
+    setCopyToast(ok ? `已复制 ${text}` : '复制失败');
+    copyToastTimerRef.current = setTimeout(() => setCopyToast(null), 1600);
+  }, []);
+
+  useEffect(() => () => {
+    if (copyToastTimerRef.current) clearTimeout(copyToastTimerRef.current);
+  }, []);
 
   // In-flight request controllers — abort on repo switch / re-refresh so a
   // slow/hung response from repo A never overwrites data for repo B.
@@ -598,7 +645,13 @@ export default function App() {
                   </div>
                   <div className="date">{formatDate(c.date)}</div>
                   <div className="author" title={c.author.email}>{c.author.name}</div>
-                  <div className="commit" title={c.hash}>{c.hash.slice(0, 8)}</div>
+                  <div
+                    className="commit"
+                    title={`${c.hash}\n点击复制 ${displayedHash(c.hash)}`}
+                    onClick={() => copyDisplayedHash(c.hash)}
+                  >
+                    {displayedHash(c.hash)}
+                  </div>
                 </div>
               ))}
               {filteredCommits.length === 0 && (
@@ -631,6 +684,7 @@ export default function App() {
           />
         </div>
       </div>
+      {copyToast && <div className="copy-toast" role="status">{copyToast}</div>}
     </div>
   );
 }

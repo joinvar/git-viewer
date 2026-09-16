@@ -413,6 +413,12 @@ button:disabled {
 }
 .log-row .commit {
   font-family: "Cascadia Code", Consolas, "SF Mono", Menlo, monospace;
+  cursor: copy;
+}
+.log-row .commit:hover {
+  color: var(--text-bright);
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 .log-row.selected .date,
 .log-row.selected .author,
@@ -822,6 +828,23 @@ button:disabled {
 .resizer-col:hover,
 .resizer-col:active {
   background: var(--accent);
+}
+
+.copy-toast {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  color: var(--text-bright);
+  padding: 8px 16px;
+  border-radius: 4px;
+  font-size: 13px;
+  font-family: "Cascadia Code", Consolas, "SF Mono", Menlo, monospace;
+  z-index: 1000;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
+  pointer-events: none;
 }
 
 /* Scrollbar */
