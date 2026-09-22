@@ -191,7 +191,10 @@ export async function getLog(repoPath, { limit = 500, includeRemote = true } = {
       'log',
       `--pretty=format:%H%x01%P%x01%an%x01%ae%x01%aI%x01%s`,
       `-n${limit}`,
-      '--topo-order',
+      // Author date, newest first. This is the timestamp the list displays.
+      // --topo-order walks one branch to the end before the other, so a newer
+      // commit on main can sit below older commits on a side branch.
+      '--author-date-order',
       '--branches',
       '--tags',
     ];
@@ -223,9 +226,8 @@ export async function getLog(repoPath, { limit = 500, includeRemote = true } = {
     }
 
     // Merge & dedupe (log shouldn't overlap with stash since we dropped --all,
-    // but keep defensive dedupe). Preserve git's --topo-order: don't sort by
-    // date afterward, otherwise side-branch commits get re-interleaved with
-    // mainline by timestamp and the graph lines criss-cross.
+    // but keep defensive dedupe). Stashes are appended after the log, so the
+    // combined list is sorted by the displayed author date below.
     const seen = new Set();
     const merged = [];
     for (const c of [...logCommits, ...stashCommits]) {
@@ -278,41 +280,59 @@ export async function getLog(repoPath, { limit = 500, includeRemote = true } = {
       c.isHead = c.hash === head;
     });
 
-    // Topologically regroup each stash to sit immediately above its first
-    // parent, instead of wherever its timestamp landed in the date-sorted
-    // stream. Stashes are side dots that belong next to the commit they were
-    // taken from — interleaving them by date can drop one into the middle of
-    // an unrelated feature branch and force the renderer to route its lane
-    // around the intervening commits.
-    return { head, commits: regroupStashes(merged) };
+    // Newest author date first, matching the Date column. A parent that is
+    // newer than its child (clock skew) is kept below that child so the graph
+    // still draws downward; every other row stays in strict date order.
+    return { head, commits: orderByAuthorDate(merged) };
   }, { timeout: GIT_LOG_TIMEOUT_MS });
 }
 
-function regroupStashes(commits) {
-  const isStash = c => c.refs?.some(r => r.kind === 'stash');
-  const visible = new Set(commits.map(c => c.hash));
-
-  const stashesByParent = new Map();
-  const remaining = [];
+function orderByAuthorDate(commits) {
+  const known = new Set(commits.map(c => c.hash));
+  const childrenOf = new Map();
   for (const c of commits) {
-    const parent = c.parents[0];
-    if (isStash(c) && parent && visible.has(parent)) {
-      if (!stashesByParent.has(parent)) stashesByParent.set(parent, []);
-      stashesByParent.get(parent).push(c);
-    } else {
-      // Non-stashes and orphan stashes (parent not in the visible window)
-      // stay where they were in the date-sorted stream.
-      remaining.push(c);
+    for (const p of c.parents) {
+      if (!known.has(p)) continue;
+      let kids = childrenOf.get(p);
+      if (!kids) childrenOf.set(p, kids = []);
+      kids.push(c.hash);
     }
   }
 
+  // Newest first, but never above a still-unplaced child. When dates already
+  // put every child above its parent, this is a plain date sort.
+  const pool = [...commits].sort(compareCommitDate);
   const result = [];
-  for (const c of remaining) {
-    const grouped = stashesByParent.get(c.hash);
-    if (grouped) for (const s of grouped) result.push(s);
-    result.push(c);
+  const placed = new Set();
+  while (result.length < pool.length) {
+    let next = null;
+    for (const c of pool) {
+      if (placed.has(c.hash)) continue;
+      const kids = childrenOf.get(c.hash);
+      if (kids && kids.some(k => !placed.has(k))) continue;
+      next = c;
+      break;
+    }
+    if (!next) {
+      for (const c of pool) if (!placed.has(c.hash)) result.push(c);
+      break;
+    }
+    placed.add(next.hash);
+    result.push(next);
   }
   return result;
+}
+
+function compareCommitDate(a, b) {
+  const da = Date.parse(a.date);
+  const db = Date.parse(b.date);
+  const aOk = Number.isFinite(da);
+  const bOk = Number.isFinite(db);
+  if (aOk && bOk && da !== db) return db - da;
+  if (aOk !== bOk) return aOk ? -1 : 1;
+  if (a.hash < b.hash) return -1;
+  if (a.hash > b.hash) return 1;
+  return 0;
 }
 
 function parseCommitLine(line) {

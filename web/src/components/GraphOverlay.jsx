@@ -1,20 +1,14 @@
 import { useLayoutEffect, useState } from 'react';
-import { GRAPH_LANE_WIDTH, graphNodeRadius, laneColor, colorForLane } from '../graph.js';
+import { GRAPH_LANE_WIDTH, graphNodeRadius, colorForLane } from '../graph.js';
 
 const LANE_W = GRAPH_LANE_WIDTH;
 const H = 22;
-const VPAD = 6;
 const ROW_HEIGHT = 29;
 const NODE_LINE_OVERLAP = 0.75;
 
 export default function GraphOverlay({ rows, maxLanes, containerRef }) {
   const metrics = useGraphRowMetrics(containerRef, rows.length);
   if (!rows.length) return null;
-
-  const rowByHash = new Map();
-  rows.forEach((row, index) => {
-    if (row.commitHash) rowByHash.set(row.commitHash, { row, index });
-  });
 
   const totalLanes = rows.reduce(
     (max, row) => Math.max(max, row.lanesBefore.length, row.lanesAfter.length, row.col + 1),
@@ -39,11 +33,12 @@ export default function GraphOverlay({ rows, maxLanes, containerRef }) {
 
       if (lane.sha === row.commitHash) {
         const end = pointNearNode(x, topY, cx, cy, graphNodeRadius(row));
-        elements.push(curveOrLine(`tb-${rowIndex}-${laneCol}`, x, topY, end.x, end.y, color, dashed));
+        // Arrive: stay on this lane, then bend into the dot at the end.
+        pushLine(elements, curveOrLine(`tb-${rowIndex}-${laneCol}`, x, topY, end.x, end.y, color, dashed, 'end'));
         return;
       }
 
-      elements.push(curveOrLine(`pt-${rowIndex}-${laneCol}`, x, topY, x, bottomY, color, dashed));
+      pushLine(elements, curveOrLine(`pt-${rowIndex}-${laneCol}`, x, topY, x, bottomY, color, dashed));
     });
 
     parents.forEach((parentSha, idx) => {
@@ -51,30 +46,21 @@ export default function GraphOverlay({ rows, maxLanes, containerRef }) {
       if (parentCol === -1) return;
 
       const px = xForCol(parentCol);
-      const parentRow = rowByHash.get(parentSha);
-      const drawToParentNode = parentRow && parentCol !== col;
-      let color, dashed;
-      if (parentCol === col) {
-        const target = lanesAfter[parentCol];
-        color = colorForLane(target, parentCol);
-        dashed = target?.type === 'uncommitted';
-      } else {
-        const source = lanesBefore[col];
-        color = source ? colorForLane(source, col) : laneColor(col);
-        dashed = source?.type === 'uncommitted';
-      }
+      const target = lanesAfter[parentCol];
+      const color = colorForLane(target, parentCol);
+      const dashed = target?.type === 'uncommitted';
 
-      let targetX = drawToParentNode ? xForCol(parentRow.row.col) : px;
-      let targetY = drawToParentNode
-        ? rowCenterY(metrics, parentRow.index)
-        : bottomY;
-      const start = pointNearNode(targetX, targetY, cx, cy, graphNodeRadius(row));
-      if (drawToParentNode) {
-        const target = pointNearNode(start.x, start.y, targetX, targetY, graphNodeRadius(parentRow.row));
-        targetX = target.x;
-        targetY = target.y;
-      }
-      elements.push(curveOrLine(`pc-${rowIndex}-${idx}`, start.x, start.y, targetX, targetY, color, dashed));
+      // Only as far as this row's bottom edge. The next rows keep the lane
+      // going (straight through, or a final bend into the parent dot).
+      // Also stroking all the way to that dot draws a second line, which
+      // sticks out past the branch node as a loose ray.
+      const start = pointNearNode(px, bottomY, cx, cy, graphNodeRadius(row));
+      pushLine(elements, curveOrLine(
+        `pc-${rowIndex}-${idx}`,
+        start.x, start.y, px, bottomY,
+        color, dashed,
+        'start',
+      ));
     });
   });
 
@@ -101,7 +87,9 @@ function rowBoundaryTop(metrics, rowIndex, cy) {
 }
 
 function rowBoundaryBottom(metrics, rowIndex, cy, rowCount) {
-  if (rowIndex >= rowCount - 1) return cy + H / 2 + VPAD;
+  // The last row has nothing below it. Ending at the dot avoids a tail
+  // hanging past the oldest commit.
+  if (rowIndex >= rowCount - 1) return cy;
   return (cy + rowCenterY(metrics, rowIndex + 1)) / 2;
 }
 
@@ -188,35 +176,63 @@ function pointNearNode(fromX, fromY, cx, cy, radius) {
   };
 }
 
-function curveOrLine(key, x1, y1, x2, y2, color, dashed) {
+function pushLine(elements, el) {
+  if (el) elements.push(el);
+}
+
+function curveOrLine(key, x1, y1, x2, y2, color, dashed, bend) {
+  if (Math.hypot(x2 - x1, y2 - y1) < 0.5) return null;
   const strokeProps = {
     stroke: color,
     strokeWidth: 2,
     strokeDasharray: dashed ? '3 2' : undefined,
-    strokeLinecap: 'round',
+    strokeLinecap: 'butt',
     strokeLinejoin: 'round',
   };
 
-  if (x1 === x2) {
+  if (Math.abs(x1 - x2) < 0.5) {
     return <line key={key} x1={x1} y1={y1} x2={x2} y2={y2} {...strokeProps} />;
   }
 
-  const d = roundedLanePath(x1, y1, x2, y2);
+  const d = roundedLanePath(x1, y1, x2, y2, bend);
 
   return <path key={key} d={d} fill="none" {...strokeProps} />;
 }
 
-function roundedLanePath(x1, y1, x2, y2) {
-  const direction = y2 >= y1 ? 1 : -1;
+// `bend` is where the corner sits:
+//   'start' — leave the source column immediately, then run straight on the
+//             target column. Used when a commit's line steps onto another lane.
+//             Bending at the far end instead leaves a straight ray on the
+//             source column and a disconnected stub on the target lane.
+//   'end'   — run straight, then bend into the dot. Used when a lane arrives
+//             at its commit.
+function roundedLanePath(x1, y1, x2, y2, bend = 'end') {
+  const dir = y2 >= y1 ? 1 : -1;
   const dy = Math.abs(y2 - y1);
   const dx = Math.abs(x2 - x1);
-  const radius = Math.min(Math.max(dx * 0.55, 5), Math.max(dy * 0.45, 5), 12);
-  const bendY = y2 - direction * radius;
-  const handleX = x1 + (x2 - x1) * 0.72;
+  const radius = Math.min(dx, dy, 10);
 
+  if (bend === 'start') {
+    const yBend = y1 + dir * radius;
+    const consumed = dir > 0 ? yBend >= y2 - 0.5 : yBend <= y2 + 0.5;
+    if (consumed) {
+      return `M ${x1} ${y1} C ${x1} ${y1 + dir * dy * 0.55} ${x2} ${y1 + dir * dy * 0.45} ${x2} ${y2}`;
+    }
+    return [
+      `M ${x1} ${y1}`,
+      `C ${x1} ${y1 + dir * radius * 0.55} ${x2} ${y1 + dir * radius * 0.45} ${x2} ${yBend}`,
+      `L ${x2} ${y2}`,
+    ].join(' ');
+  }
+
+  const yBend = y2 - dir * radius;
+  const consumed = dir > 0 ? yBend <= y1 + 0.5 : yBend >= y1 - 0.5;
+  if (consumed) {
+    return `M ${x1} ${y1} C ${x1} ${y1 + dir * dy * 0.55} ${x2} ${y2 - dir * dy * 0.45} ${x2} ${y2}`;
+  }
   return [
     `M ${x1} ${y1}`,
-    `L ${x1} ${bendY}`,
-    `C ${x1} ${y2 - direction * radius * 0.35} ${handleX} ${y2} ${x2} ${y2}`,
+    `L ${x1} ${yBend}`,
+    `C ${x1} ${y2 - dir * radius * 0.45} ${x2} ${y2 - dir * radius * 0.25} ${x2} ${y2}`,
   ].join(' ');
 }
